@@ -22,7 +22,7 @@ export default function Home() {
     formData.append('file', file);
     
     try {
-      const res = await fetch('http://localhost:8000/api/upload', {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -47,7 +47,7 @@ export default function Home() {
     setIsChatting(true);
     
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: userMessage })
