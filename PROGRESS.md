@@ -33,7 +33,7 @@ uv venv
 uv pip install -r requirements.txt
 
 # Start the FastAPI server
-python main.py
+uvicorn main:app --reload
 ```
 The backend API will run on `http://localhost:8000`.
 

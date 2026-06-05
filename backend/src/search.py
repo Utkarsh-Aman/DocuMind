@@ -36,7 +36,7 @@ class RAGSearch:
         if not context:
             return {"answer": "No relevant context found in documents.", "sources": []}
             
-        prompt = f"Summarize the following context to answer the query: '{query}'. Provide a clear, concise, and helpful answer. Do not say 'Based on the context', just answer the query.\n\nContext:\n{context}\n\nAnswer:"
+        prompt = f"Answer the following query based on the context provided: '{query}'. Provide a clear, concise, and helpful answer. Do not say 'Based on the context'. also if the answer is not in the context then say No relevant context found in documents. and do not make it up.\n\nContext:\n{context}\n\nAnswer:"
         
         try:
             response = self.llm.invoke([prompt])
