@@ -134,8 +134,10 @@ async def google_auth(req: GoogleLoginRequest, response: Response, db: Session =
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
+        import traceback
         print(f"[ERROR] Exception during Google login: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during authentication.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error during authentication: {str(e)}")
 
 @app.post("/api/auth/logout")
 async def logout(response: Response):
@@ -313,8 +315,10 @@ async def chat_query(req: ChatRequest, current_user: User = Depends(get_current_
         result = rag_search.search_and_summarize(req.query, user_id=current_user.id, top_k=5)
         return result
     except Exception as e:
+        import traceback
         print(f"[ERROR] Chat query exception: {e}")
-        raise HTTPException(status_code=500, detail="Error retrieving context or querying LLM.")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error retrieving context or querying LLM: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
