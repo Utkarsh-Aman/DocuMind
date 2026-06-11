@@ -19,7 +19,13 @@ else:
     DATABASE_URL = raw_db_url
 
 # Initialize engine and sessionmaker
-engine = create_engine(DATABASE_URL)
+# pool_pre_ping=True verifies connections are alive before check-out, replacing stale connections automatically
+# pool_recycle=300 recycles connections after 5 minutes to prevent idle terminations
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
