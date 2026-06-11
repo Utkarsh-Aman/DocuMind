@@ -23,7 +23,7 @@ import {
 
 interface UserProfile {
   id: number;
-  email: str;
+  email: string;
   name: string | null;
   picture_url: string | null;
 }

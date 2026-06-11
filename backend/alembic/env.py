@@ -19,10 +19,9 @@ import src.database.models  # Ensures tables are registered on Base.metadata
 config = context.config
 
 # Dynamically resolve database URL from the environment
-raw_db_url = os.getenv(
-    "DATABASE_URL",
-    "postgresql://neondb_owner:npg_DMUI0BPw5FJR@ep-long-sea-apzzo7jm.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
-)
+raw_db_url = os.getenv("DATABASE_URL")
+if not raw_db_url:
+    raise RuntimeError("DATABASE_URL environment variable is not set.")
 
 # Convert to psycopg v3 driver format if necessary
 if raw_db_url and raw_db_url.startswith("postgresql://"):

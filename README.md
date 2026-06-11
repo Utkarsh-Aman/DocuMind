@@ -95,7 +95,7 @@ NEXT_PUBLIC_BACKEND_URL="http://localhost:8000"
    ```
 3. Run the FastAPI development server:
    ```bash
-   python main.py
+   uvicorn main:app --reload
    ```
    The backend API will run on `http://localhost:8000`.
 
