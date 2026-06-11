@@ -22,6 +22,27 @@ class ChromaStore:
         self.vectorstore.add_documents(documents)
         print(f"[INFO] Successfully added chunks to Chroma.")
 
-    def query(self, query_text: str, top_k: int = 5) -> List[Any]:
-        print(f"[INFO] Querying vector store for: '{query_text}'")
-        return self.vectorstore.similarity_search(query_text, k=top_k)
+    def query(self, query_text: str, user_id: int, top_k: int = 5) -> List[Any]:
+        print(f"[INFO] Querying vector store for: '{query_text}' for user_id: {user_id}")
+        # Apply metadata filtering to guarantee document isolation between users
+        return self.vectorstore.similarity_search(
+            query_text,
+            k=top_k,
+            filter={"user_id": str(user_id)}
+        )
+
+    def delete_document_chunks(self, user_id: int, document_id: int):
+        """
+        Deletes chunks corresponding to the specified document ID for the given user ID.
+        """
+        print(f"[INFO] Deleting chunks from Chroma for user_id={user_id}, document_id={document_id}")
+        self.vectorstore._collection.delete(
+            where={
+                "$and": [
+                    {"user_id": str(user_id)},
+                    {"document_id": str(document_id)}
+                ]
+            }
+        )
+        print(f"[INFO] Successfully deleted Chroma chunks.")
+

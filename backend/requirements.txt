@@ -10,3 +10,12 @@ python-dotenv
 fastapi
 uvicorn
 python-multipart
+docx2txt
+openpyxl
+unstructured
+sqlalchemy
+psycopg[binary]
+alembic
+python-jose[cryptography]
+google-auth
+

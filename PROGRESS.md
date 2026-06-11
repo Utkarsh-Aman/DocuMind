@@ -1,50 +1,54 @@
-# DocuMind Project Structure and Progress
+# DocuMind Project Progress
+
+## Implementation Status
+
+- [x] **Database Setup**
+  - Designed SQLAlchemy models for `User` and `Document`.
+  - Configured PostgreSQL connection pool with automated driver mapping for `psycopg` (v3).
+  - Configured and executed Alembic database migrations. Created table relations on Neon cloud DB.
+- [x] **Authentication Flow**
+  - Integrated official Google Identity Services login button.
+  - Implemented backend Google ID token verifier (`google-auth`).
+  - Added JWT access token encoding/decoding.
+  - Configured secure cookie generation (HttpOnly, SameSite=Lax).
+  - Created server-side route-guard middleware on Next.js frontend to restrict `/dashboard`.
+- [x] **Vector store Isolation**
+  - Updated langchain `ChromaStore` metadata tagging on ingestion (`user_id`, `document_id`, `filename`).
+  - Updated similarity searches to apply a strict metadata `where={"user_id": str(user_id)}` filter.
+  - Added physical chunk deletion from Chroma using multi-conditional filters.
+- [x] **Frontend Redesign**
+  - Rebuilt frontend pages using TailwindCSS v4.
+  - Added Lucide icons and interactive Framer Motion animations.
+  - Added drag-and-drop document upload client with file validation.
+  - Created document inventories showing processing state badge with auto-polling.
+  - Implemented chat window with markdown layout, thinking spinner, and click-to-preview citation drawers.
+
+---
 
 ## Folder and File Structure
 
-### Backend
-The backend is a FastAPI application handling the core RAG (Retrieval-Augmented Generation) logic.
-- `backend/main.py`: The entry point for the FastAPI server. It exposes endpoints for uploading documents (`/api/upload`) and asking questions (`/api/chat`).
-- `backend/requirements.txt`: The python dependencies for the backend (FastAPI, LangChain, ChromaDB, etc.).
-- `backend/src/data_loader.py`: Responsible for loading and parsing different types of documents (e.g., PDFs).
-- `backend/src/embedding.py`: Handles the chunking of document text and generating embeddings using sentence transformers.
-- `backend/src/search.py`: Contains the `RAGSearch` class which interacts with ChromaDB to store documents and retrieve context, and uses Groq/Langchain to generate answers based on the retrieved context.
-- `backend/chroma_db/`: Directory where the ChromaDB vector database is persisted.
-- `backend/temp_uploads/`: Temporary directory for storing files uploaded via the API before processing.
-
-### Frontend
-The frontend is a Next.js application (React framework).
-- `frontend/package.json`: Contains project metadata, scripts (`dev`, `build`), and Node.js dependencies (Next.js, React, TailwindCSS).
-- `frontend/src/app/page.tsx`: The main React component/page for the application UI. It likely contains the chat interface and file upload component.
-- `frontend/src/app/layout.tsx`: The root layout of the Next.js application, defining the global HTML structure and importing global styles.
-- `frontend/src/app/globals.css`: Global CSS file, including TailwindCSS directives.
-
-## How to Start the Full Application
-
-### 1. Start the Backend
-Open a terminal and navigate to the `backend` directory:
-```bash
-cd backend
-# Create and activate a virtual environment (if not already done)
-uv venv
-.venv\Scripts\activate # On Windows
-
-# Install dependencies
-uv pip install -r requirements.txt
-
-# Start the FastAPI server
-uvicorn main:app --reload
+```text
+├── backend/
+│   ├── alembic/                # DB migrations scripts
+│   ├── src/
+│   │   ├── auth/               # Google OAuth, JWT tokens, dependencies
+│   │   ├── database/           # Connection configs and models
+│   │   ├── data_loader.py      # Parsers
+│   │   ├── embedding.py        # Splitter and vectors
+│   │   ├── search.py           # RAG LLM query resolver
+│   │   └── vectorstore.py      # Chroma client
+│   ├── main.py                 # FastAPI endpoints
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── dashboard/      # Chat console & Ingestion vault
+│   │   │   ├── login/          # OAuth login page
+│   │   │   ├── globals.css     # CSS themes
+│   │   │   ├── layout.tsx      # Next.js layout
+│   │   │   └── page.tsx        # Route delegate
+│   │   └── middleware.ts       # Auth guard
+│   └── package.json
+└── docker-compose.yml          # Multi-service setup
 ```
-The backend API will run on `http://localhost:8000`.
-
-### 2. Start the Frontend
-Open another terminal and navigate to the `frontend` directory:
-```bash
-cd frontend
-# Install dependencies (if not already done)
-npm install
-
-# Start the Next.js development server
-npm run dev
-```
-The frontend application will be available at `http://localhost:3000`.
