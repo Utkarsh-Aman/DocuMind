@@ -52,9 +52,9 @@ DocuMind/
 ## Setup & Configuration
 
 ### Prerequisites
-- Node.js (v18+)
+- Node.js
 - Python (3.10+)
-- Google Cloud Console client credentials (configured origin `http://localhost:3000`)
+- Google Cloud Console client credentials (configured origin )
 - Groq API Key (for LLM RAG inference)
 
 ### 1. Environment Variables
