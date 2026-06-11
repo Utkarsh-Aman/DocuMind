@@ -25,6 +25,7 @@ export default function Login() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ id_token: idToken }),
+          credentials: 'include',
         });
 
         const data = await res.json();
@@ -33,7 +34,10 @@ export default function Login() {
           // Store user info in localStorage for non-sensitive UI state representation
           localStorage.setItem('user', JSON.stringify(data.user));
           
-          // Successful login, cookie is set by backend, redirect to dashboard
+          // Write access token to local cookie so Next.js middleware (on frontend domain) is aware of session state
+          document.cookie = `access_token=${data.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; samesite=lax`;
+          
+          // Successful login, redirect to dashboard
           router.push('/dashboard');
         } else {
           setError(data.detail || 'Authentication failed. Please try again.');

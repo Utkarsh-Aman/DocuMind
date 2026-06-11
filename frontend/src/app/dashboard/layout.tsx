@@ -16,10 +16,15 @@ export default function DashboardLayout({
     const checkAuth = async () => {
       try {
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        const token = typeof document !== 'undefined'
+          ? document.cookie.split('; ').find(row => row.startsWith('access_token='))?.split('=')[1]
+          : '';
+
         const res = await fetch(`${backendUrl}/api/auth/me`, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
+            'Authorization': token ? `Bearer ${token}` : '',
           },
           credentials: 'include', // Send the HttpOnly cookie
         });

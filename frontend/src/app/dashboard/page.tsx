@@ -99,11 +99,19 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isChatting]);
 
+  const getClientToken = () => {
+    if (typeof document === 'undefined') return '';
+    return document.cookie.split('; ').find(row => row.startsWith('access_token='))?.split('=')[1] || '';
+  };
+
   const fetchDocuments = async (silent = false) => {
     if (!silent) setLoadingDocs(true);
     try {
       const res = await fetch(`${backendUrl}/api/documents`, {
         method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${getClientToken()}`
+        },
         credentials: 'include',
       });
       if (res.ok) {
@@ -121,11 +129,16 @@ export default function Dashboard() {
     try {
       await fetch(`${backendUrl}/api/auth/logout`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${getClientToken()}`
+        },
         credentials: 'include',
       });
     } catch (err) {
       console.error('Error logging out:', err);
     } finally {
+      // Clear client session cookies and local storage
+      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax";
       localStorage.removeItem('user');
       router.push('/login');
     }
@@ -135,6 +148,9 @@ export default function Dashboard() {
     try {
       const res = await fetch(`${backendUrl}/api/documents/${id}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${getClientToken()}`
+        },
         credentials: 'include',
       });
       if (res.ok) {
@@ -164,6 +180,7 @@ export default function Dashboard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getClientToken()}`
         },
         body: JSON.stringify({ query: trimmedQuery }),
         credentials: 'include',
@@ -248,6 +265,9 @@ export default function Dashboard() {
     try {
       const res = await fetch(`${backendUrl}/api/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${getClientToken()}`
+        },
         body: formData,
         credentials: 'include',
       });
