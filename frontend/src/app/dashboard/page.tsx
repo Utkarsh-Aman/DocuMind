@@ -454,11 +454,11 @@ export default function Dashboard() {
             try {
               const meta = JSON.parse(payload.replace('[DONE] ', ''));
               citations  = meta.citations || [];
-              if (meta.chat_id && !currentChatId) {
+              if (meta.chat_id) {
                 setCurrentChatId(meta.chat_id);
-                // Refresh sessions list so the new one appears in history
-                fetchChatSessions();
               }
+              // Always refresh so history panel stays up to date
+              fetchChatSessions();
             } catch (err) {
               console.error('Error parsing DONE payload:', err);
             }
@@ -569,7 +569,7 @@ export default function Dashboard() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full min-h-screen flex overflow-hidden" style={{ background: 'var(--bg)' }}>
+    <div className="w-full h-screen flex overflow-hidden" style={{ background: 'var(--bg)' }}>
 
       {/* ════════════════════════════════════════════════════════════════════
           SIDEBAR
@@ -808,12 +808,12 @@ export default function Dashboard() {
               animate    = {{ opacity: 1, x: 0 }}
               exit       = {{ opacity: 0, x: -16 }}
               transition = {{ duration: 0.2 }}
-              className  = "flex-1 flex min-h-0 h-screen"
+              className  = "flex-1 flex min-h-0" style={{ height: '100%' }}
             >
               {/* Chat column */}
               <div
                 className="flex-1 flex flex-col min-w-0"
-                style={{ borderRight: selectedCitation ? '1px solid var(--border)' : 'none' }}
+                style={{ borderRight: selectedCitation ? '1px solid var(--border)' : 'none', minHeight: 0 }}
               >
                 {/* Chat header */}
                 <div

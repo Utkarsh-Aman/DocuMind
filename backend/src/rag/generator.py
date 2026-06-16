@@ -51,7 +51,11 @@ def build_rag_prompt(
     system_prompt = (
         "You are DocuMind, an intelligent document assistant. "
         "Answer the user's question using ONLY the context provided below. "
-        "Be concise, clear, and helpful. "
+        "Format your response using clean Markdown: "
+        "use numbered lists (1. 2. 3.) with a blank line between items, "
+        "use **bold** for key terms, and use headings (## or ###) for multi-section answers. "
+        "Keep answers concise and well-structured. "
+        "Do NOT write numbered items all on one line — each item must be on its own line. "
         "Do NOT make up information that is not in the context. "
         "If the context does not contain the answer, say so honestly."
     )
