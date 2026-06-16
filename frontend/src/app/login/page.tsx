@@ -37,8 +37,8 @@ export default function Login() {
           // Write access token to local cookie so Next.js middleware (on frontend domain) is aware of session state
           document.cookie = `access_token=${data.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; samesite=lax`;
           
-          // Successful login, redirect to dashboard
-          router.push('/dashboard');
+          // Successful login, redirect to dashboard using hard navigation to bypass Next.js Router Cache
+          window.location.href = '/dashboard';
         } else {
           setError(data.detail || 'Authentication failed. Please try again.');
         }

@@ -9,7 +9,7 @@ load_dotenv()
 # JWT Secret Key - loaded from env, falls back to a development string
 JWT_SECRET = os.getenv("JWT_SECRET", "rag-for-docs-super-secret-key-change-this-in-production")
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24)) # Default to 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60 * 24 * 7)) # Default to 7 days
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """

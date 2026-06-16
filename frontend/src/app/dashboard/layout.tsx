@@ -37,11 +37,15 @@ export default function DashboardLayout({
         } else {
           // Cookie expired or invalid
           localStorage.removeItem('user');
-          router.replace('/login');
+          // Clear the access token cookie to prevent middleware redirect loops
+          document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax";
+          window.location.href = '/login';
         }
       } catch (err) {
         console.error('Session verification error:', err);
-        router.replace('/login');
+        localStorage.removeItem('user');
+        document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax";
+        window.location.href = '/login';
       } finally {
         setLoading(false);
       }
