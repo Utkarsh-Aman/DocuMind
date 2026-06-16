@@ -1,6 +1,6 @@
 # DocuMind - Secure AI Document RAG Platform
 
-DocuMind is an enterprise-grade, multi-user Retrieval-Augmented Generation (RAG) platform. It secures user documents through complete Google OAuth authentication, local/cloud PostgreSQL storage, and isolated ChromaDB vector indexing (metadata filtering).
+DocuMind is a multi-user Retrieval-Augmented Generation (RAG) platform. It secures user documents through complete Google OAuth authentication, local/cloud PostgreSQL storage, and isolated ChromaDB vector indexing (metadata filtering).
 
 ---
 

@@ -1,144 +1,376 @@
 'use client';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  MessageSquare, 
-  Database, 
-  UploadCloud, 
-  Trash2, 
-  LogOut, 
-  User, 
-  FileText, 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle, 
-  Send, 
-  Sparkles, 
-  ChevronRight,
+import {
+  MessageSquare,
+  Database,
+  UploadCloud,
+  Trash2,
+  LogOut,
+  FileText,
+  CheckCircle,
+  AlertTriangle,
+  Send,
+  BrainCircuit,
   Loader2,
   FileCode,
-  CornerDownLeft
+  Plus,
+  Moon,
+  Sun,
+  ChevronLeft,
+  ExternalLink,
+  X,
+  History,
 } from 'lucide-react';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 interface UserProfile {
-  id: number;
-  email: string;
-  name: string | null;
+  id        : number;
+  email     : string;
+  name      : string | null;
   picture_url: string | null;
 }
 
 interface DocumentInfo {
-  id: number;
-  filename: string;
+  id              : number;
+  filename        : string;
   upload_timestamp: string;
-  status: 'processing' | 'active' | 'error';
+  status          : 'processing' | 'active' | 'error';
+}
+
+interface Citation {
+  filename: string;
+  page    : number | null;
+  score   : number;
+  preview : string;
 }
 
 interface ChatMessage {
-  role: 'user' | 'assistant';
+  role   : 'user' | 'assistant';
   content: string;
-  sources?: {
-    filename: string;
-    page: number | null;
-    content: string;
-  }[];
+  sources?: Citation[];
+  streaming?: boolean; // true while token-by-token rendering is in progress
 }
 
+interface ChatSession {
+  chat_id   : number;
+  title     : string;
+  created_at: string;
+}
+
+// ─── Theme hook ───────────────────────────────────────────────────────────────
+
+function useTheme() {
+  const [dark, setDark] = useState(true);
+
+  useEffect(() => {
+    const saved  = localStorage.getItem('theme');
+    const isDark = saved ? saved === 'dark' : true;
+    setDark(isDark);
+    document.documentElement.classList.toggle('dark', isDark);
+  }, []);
+
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.classList.toggle('dark', next);
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+  };
+
+  return { dark, toggle };
+}
+
+// ─── Markdown renderer (unchanged from original + theme-aware classes) ────────
+
+function renderStyledText(text: string): React.ReactNode[] {
+  const tokens: React.ReactNode[] = [];
+  let remaining = text;
+  let keyIdx    = 0;
+
+  while (remaining) {
+    const boldMatch = remaining.match(/^([\s\S]*?)\*\*(.*?)\*\*([\s\S]*)$/);
+    const codeMatch = remaining.match(/^([\s\S]*?)`(.*?)`([\s\S]*)$/);
+    const boldIdx   = boldMatch ? boldMatch[1].length : -1;
+    const codeIdx   = codeMatch ? codeMatch[1].length : -1;
+
+    if (boldMatch && (codeIdx === -1 || boldIdx < codeIdx)) {
+      if (boldMatch[1]) tokens.push(<span key={keyIdx++}>{boldMatch[1]}</span>);
+      tokens.push(
+        <strong key={keyIdx++} style={{ color: 'var(--text)' }}>
+          {boldMatch[2]}
+        </strong>
+      );
+      remaining = boldMatch[3];
+    } else if (codeMatch) {
+      if (codeMatch[1]) tokens.push(<span key={keyIdx++}>{codeMatch[1]}</span>);
+      tokens.push(
+        <code
+          key      = {keyIdx++}
+          className= "px-1 py-0.5 rounded text-xs font-mono"
+          style    = {{ background: 'var(--bg-3)', color: 'var(--accent)' }}
+        >
+          {codeMatch[2]}
+        </code>
+      );
+      remaining = codeMatch[3];
+    } else {
+      tokens.push(<span key={keyIdx++}>{remaining}</span>);
+      break;
+    }
+  }
+  return tokens;
+}
+
+function renderMessageContent(content: string): React.ReactNode {
+  const parts = content.split(/(```[\s\S]*?```)/g);
+
+  return parts.map((part, index) => {
+    if (part.startsWith('```') && part.endsWith('```')) {
+      const lines  = part.slice(3, -3).trim().split('\n');
+      let language = 'code';
+      let code     = part.slice(3, -3).trim();
+      if (lines.length > 0 && /^[a-zA-Z0-9_-]+$/.test(lines[0])) {
+        language = lines[0];
+        code     = lines.slice(1).join('\n');
+      }
+      return (
+        <div
+          key      = {index}
+          className= "my-3 rounded-xl overflow-hidden font-mono text-xs"
+          style    = {{ border: '1px solid var(--border)' }}
+        >
+          <div
+            className= "px-4 py-1.5 text-[10px] uppercase tracking-widest flex items-center justify-between"
+            style    = {{ background: 'var(--bg-3)', color: 'var(--text-3)' }}
+          >
+            <span>{language}</span>
+            <FileCode className="w-3.5 h-3.5" />
+          </div>
+          <pre className="p-4 overflow-x-auto text-sm" style={{ background: 'var(--bg-2)', color: 'var(--text-2)' }}>
+            <code>{code}</code>
+          </pre>
+        </div>
+      );
+    }
+
+    const lines = part.split('\n');
+    return (
+      <div key={index} className="space-y-2 text-sm leading-relaxed">
+        {lines.map((line, lIdx) => {
+          if (line.trim() === '') return <div key={lIdx} className="h-1.5" />;
+
+          if (line.startsWith('- ') || line.startsWith('* ')) {
+            return (
+              <ul key={lIdx} className="list-disc pl-5 space-y-0.5">
+                <li>{renderStyledText(line.substring(2))}</li>
+              </ul>
+            );
+          }
+          if (/^\d+\.\s/.test(line)) {
+            const m = line.match(/^(\d+)\.\s(.*)$/);
+            return (
+              <ol key={lIdx} className="list-decimal pl-5 space-y-0.5">
+                <li value={m ? parseInt(m[1]) : undefined}>
+                  {renderStyledText(m ? m[2] : line)}
+                </li>
+              </ol>
+            );
+          }
+          if (line.startsWith('#')) {
+            const hMatch = line.match(/^(#{1,6})\s+(.*)$/);
+            if (hMatch) {
+              const hLvl    = hMatch[1].length;
+              const hText   = renderStyledText(hMatch[2]);
+              const classes =
+                hLvl === 1 ? 'text-lg font-bold mt-4 mb-2' :
+                hLvl === 2 ? 'text-base font-bold mt-3 mb-1' :
+                             'text-sm font-bold mt-2 mb-1';
+              return React.createElement(`h${hLvl}`, {
+                key      : lIdx,
+                className: classes,
+                style    : { color: 'var(--text)' },
+              }, hText);
+            }
+          }
+          return <p key={lIdx} style={{ color: 'var(--text-2)' }}>{renderStyledText(line)}</p>;
+        })}
+      </div>
+    );
+  });
+}
+
+// ─── Dashboard Page ───────────────────────────────────────────────────────────
+
 export default function Dashboard() {
-  const router = useRouter();
-  
-  // State variables
-  const [activeTab, setActiveTab] = useState<'chat' | 'documents'>('chat');
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  const [loadingDocs, setLoadingDocs] = useState(true);
-  
-  // Chat state
-  const [query, setQuery] = useState('');
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-  const [isChatting, setIsChatting] = useState(false);
-  const [selectedSource, setSelectedSource] = useState<any | null>(null);
+  const router         = useRouter();
+  const { dark, toggle } = useTheme();
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const [activeTab,      setActiveTab]      = useState<'chat' | 'documents'>('chat');
+  const [user,           setUser]           = useState<UserProfile | null>(null);
+  const [documents,      setDocuments]      = useState<DocumentInfo[]>([]);
+  const [loadingDocs,    setLoadingDocs]    = useState(true);
+
+  // Chat state (V2.20)
+  const [query,          setQuery]          = useState('');
+  const [chatHistory,    setChatHistory]    = useState<ChatMessage[]>([]);
+  const [isChatting,     setIsChatting]     = useState(false);
+  const [currentChatId,  setCurrentChatId]  = useState<number | null>(null);
+  const [chatSessions,   setChatSessions]   = useState<ChatSession[]>([]);
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
 
   // Upload state
-  const [dragActive, setDragActive] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [dragActive,     setDragActive]     = useState(false);
+  const [uploading,      setUploading]      = useState(false);
+  const [uploadError,    setUploadError]    = useState<string | null>(null);
+  const [uploadSuccess,  setUploadSuccess]  = useState<string | null>(null);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatEndRef   = useRef<HTMLDivElement>(null);
+  const textareaRef  = useRef<HTMLTextAreaElement>(null);
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 
-  // 1. Fetch user data and documents on mount
-  useEffect(() => {
-    // Load cached user profile
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    
-    fetchDocuments();
-  }, []);
-
-  // 2. Poll document statuses if any is in 'processing' state
-  useEffect(() => {
-    const hasProcessing = documents.some(doc => doc.status === 'processing');
-    if (hasProcessing) {
-      const interval = setInterval(() => {
-        fetchDocuments(true); // silent fetch
-      }, 4000);
-      return () => clearInterval(interval);
-    }
-  }, [documents]);
-
-  // 3. Scroll to chat end when new messages arrive
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory, isChatting]);
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   const getClientToken = () => {
     if (typeof document === 'undefined') return '';
-    return document.cookie.split('; ').find(row => row.startsWith('access_token='))?.split('=')[1] || '';
+    return (
+      document.cookie
+        .split('; ')
+        .find(row => row.startsWith('access_token='))
+        ?.split('=')[1] || ''
+    );
   };
 
-  const fetchDocuments = async (silent = false) => {
+  const authHeaders = () => ({
+    Authorization: `Bearer ${getClientToken()}`,
+  });
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
+
+  const fetchDocuments = useCallback(async (silent = false) => {
     if (!silent) setLoadingDocs(true);
     try {
       const res = await fetch(`${backendUrl}/api/documents`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${getClientToken()}`
-        },
+        headers    : authHeaders(),
         credentials: 'include',
       });
-      if (res.ok) {
-        const data = await res.json();
-        setDocuments(data);
-      }
+      if (res.ok) setDocuments(await res.json());
     } catch (err) {
       console.error('Error fetching documents:', err);
     } finally {
       if (!silent) setLoadingDocs(false);
     }
+  }, [backendUrl]);
+
+  const fetchChatSessions = useCallback(async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/chats`, {
+        headers    : authHeaders(),
+        credentials: 'include',
+      });
+      if (res.ok) setChatSessions(await res.json());
+    } catch (err) {
+      console.error('Error fetching chat sessions:', err);
+    }
+  }, [backendUrl]);
+
+  // Load a past chat session into the UI
+  const loadChatSession = async (chatId: number) => {
+    try {
+      const res = await fetch(`${backendUrl}/api/chats/${chatId}/messages`, {
+        headers    : authHeaders(),
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const msgs: any[] = await res.json();
+        setChatHistory(
+          msgs.map(m => ({
+            role   : m.role,
+            content: m.content,
+            sources: m.sources || [],
+          }))
+        );
+        setCurrentChatId(chatId);
+        setSessionPanelOpen(false);
+        setActiveTab('chat');
+      }
+    } catch (err) {
+      console.error('Error loading chat session:', err);
+    }
+  };
+
+  const deleteChatSession = async (chatId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await fetch(`${backendUrl}/api/chats/${chatId}`, {
+        method     : 'DELETE',
+        headers    : authHeaders(),
+        credentials: 'include',
+      });
+      setChatSessions(prev => prev.filter(s => s.chat_id !== chatId));
+      if (currentChatId === chatId) startNewChat();
+    } catch (err) {
+      console.error('Error deleting chat session:', err);
+    }
+  };
+
+  // ── Mount effects ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const storedUser = localStorage.getItem('user');
+    if (storedUser) setUser(JSON.parse(storedUser));
+    fetchDocuments();
+    fetchChatSessions();
+  }, []);
+
+  // Poll if any document is still processing
+  useEffect(() => {
+    const hasProcessing = documents.some(d => d.status === 'processing');
+    if (!hasProcessing) return;
+    const interval = setInterval(() => fetchDocuments(true), 4000);
+    return () => clearInterval(interval);
+  }, [documents]);
+
+  // Scroll to latest message
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatHistory, isChatting]);
+
+  // Auto-resize textarea
+  const handleTextareaInput = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  };
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  const startNewChat = () => {
+    setChatHistory([]);
+    setCurrentChatId(null);
+    setSelectedCitation(null);
+    setActiveTab('chat');
+    setSessionPanelOpen(false);
   };
 
   const handleLogout = async () => {
     try {
       await fetch(`${backendUrl}/api/auth/logout`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${getClientToken()}`
-        },
+        method     : 'POST',
+        headers    : authHeaders(),
         credentials: 'include',
       });
     } catch (err) {
-      console.error('Error logging out:', err);
+      console.error('Logout error:', err);
     } finally {
-      // Clear client session cookies and local storage
-      document.cookie = "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax";
+      document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax';
       localStorage.removeItem('user');
       router.push('/login');
     }
@@ -147,24 +379,22 @@ export default function Dashboard() {
   const handleDeleteDocument = async (id: number) => {
     try {
       const res = await fetch(`${backendUrl}/api/documents/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${getClientToken()}`
-        },
+        method     : 'DELETE',
+        headers    : authHeaders(),
         credentials: 'include',
       });
       if (res.ok) {
         setDocuments(prev => prev.filter(doc => doc.id !== id));
-        // Reset source preview if it belonged to deleted file
-        setSelectedSource(null);
       } else {
         const data = await res.json();
         alert(data.detail || 'Failed to delete document');
       }
     } catch (err) {
-      console.error('Error deleting document:', err);
+      console.error('Delete document error:', err);
     }
   };
+
+  // ── Streaming chat submit ──────────────────────────────────────────────────
 
   const handleChatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,86 +402,136 @@ export default function Dashboard() {
     if (!trimmedQuery || isChatting) return;
 
     setQuery('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
+    // Append user message immediately
     setChatHistory(prev => [...prev, { role: 'user', content: trimmedQuery }]);
     setIsChatting(true);
 
+    // Placeholder streaming assistant message
+    const assistantPlaceholderIdx = chatHistory.length + 1;
+    setChatHistory(prev => [
+      ...prev,
+      { role: 'assistant', content: '', streaming: true, sources: [] },
+    ]);
+
     try {
       const res = await fetch(`${backendUrl}/api/chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getClientToken()}`
-        },
-        body: JSON.stringify({ query: trimmedQuery }),
+        method     : 'POST',
+        headers    : { 'Content-Type': 'application/json', ...authHeaders() },
+        body       : JSON.stringify({
+          query  : trimmedQuery,
+          chat_id: currentChatId,
+        }),
         credentials: 'include',
       });
 
-      const data = await res.json();
-      if (res.ok) {
-        setChatHistory(prev => [
-          ...prev, 
-          { 
-            role: 'assistant', 
-            content: data.answer, 
-            sources: data.sources 
-          }
-        ]);
-      } else {
-        setChatHistory(prev => [
-          ...prev, 
-          { 
-            role: 'assistant', 
-            content: data.detail || 'An error occurred during search retrieval.' 
-          }
-        ]);
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Request failed');
       }
-    } catch (err) {
-      setChatHistory(prev => [
-        ...prev, 
-        { 
-          role: 'assistant', 
-          content: 'Unable to connect to the search endpoint.' 
+
+      // ── Stream SSE tokens ────────────────────────────────────────────────
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let   fullAnswer = '';
+      let   citations : Citation[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+
+        for (const line of lines) {
+          const payload = line.replace('data: ', '');
+
+          if (payload.startsWith('[DONE]')) {
+            // Parse the final metadata from the [DONE] event
+            try {
+              const meta = JSON.parse(payload.replace('[DONE] ', ''));
+              citations  = meta.citations || [];
+              if (meta.chat_id && !currentChatId) {
+                setCurrentChatId(meta.chat_id);
+                // Refresh sessions list so the new one appears in history
+                fetchChatSessions();
+              }
+            } catch (err) {
+              console.error('Error parsing DONE payload:', err);
+            }
+          } else {
+            // Append the token to the streaming message
+            fullAnswer += payload;
+            setChatHistory(prev => {
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                role     : 'assistant',
+                content  : fullAnswer,
+                streaming: true,
+                sources  : [],
+              };
+              return updated;
+            });
+          }
         }
-      ]);
+      }
+
+      // ── Finalise the message (remove streaming flag, attach citations) ──
+      setChatHistory(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role   : 'assistant',
+          content: fullAnswer,
+          sources: citations,
+        };
+        return updated;
+      });
+
+    } catch (err: any) {
+      setChatHistory(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role   : 'assistant',
+          content: err.message || 'Unable to connect to the server.',
+        };
+        return updated;
+      });
     } finally {
       setIsChatting(false);
     }
   };
 
-  // Drag and drop handlers
+  // Submit on Enter (Shift+Enter for newline)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleChatSubmit(e as any);
+    }
+  };
+
+  // ── File upload ────────────────────────────────────────────────────────────
+
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
+    setDragActive(e.type === 'dragenter' || e.type === 'dragover');
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      uploadFile(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      uploadFile(e.target.files[0]);
-    }
+    if (e.dataTransfer.files?.[0]) uploadFile(e.dataTransfer.files[0]);
   };
 
   const uploadFile = async (file: File) => {
     const validExtensions = ['.pdf', '.txt', '.csv', '.xlsx', '.docx', '.json'];
-    const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-    
-    if (!validExtensions.includes(fileExtension)) {
-      setUploadError(`Invalid extension. Supported formats are: ${validExtensions.join(', ')}`);
-      setUploadSuccess(null);
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    if (!validExtensions.includes(ext)) {
+      setUploadError(`Unsupported file type. Allowed: ${validExtensions.join(', ')}`);
       return;
     }
 
@@ -264,419 +544,578 @@ export default function Dashboard() {
 
     try {
       const res = await fetch(`${backendUrl}/api/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${getClientToken()}`
-        },
-        body: formData,
+        method     : 'POST',
+        headers    : authHeaders(),
+        body       : formData,
         credentials: 'include',
       });
-
       const data = await res.json();
       if (res.ok) {
-        setUploadSuccess(`Successfully queued "${file.name}" for vector ingestion!`);
+        setUploadSuccess(`"${file.name}" uploaded and queued for embedding.`);
         fetchDocuments();
       } else {
         setUploadError(data.detail || 'Upload failed.');
       }
-    } catch (err) {
-      setUploadError('Network connection failed during upload.');
+    } catch {
+      setUploadError('Network error during upload.');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // Helper for parsing inline bold and code
-  const renderStyledText = (text: string) => {
-    const tokens: React.ReactNode[] = [];
-    let remaining = text;
-    let keyIdx = 0;
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const activeDocsCount = documents.filter(d => d.status === 'active').length;
 
-    while (remaining) {
-      const boldMatch = remaining.match(/^([\s\S]*?)\*\*(.*?)\*\*([\s\S]*)$/);
-      const codeMatch = remaining.match(/^([\s\S]*?)`(.*?)`([\s\S]*)$/);
-
-      const boldIdx = boldMatch ? boldMatch[1].length : -1;
-      const codeIdx = codeMatch ? codeMatch[1].length : -1;
-
-      if (boldMatch && (codeIdx === -1 || boldIdx < codeIdx)) {
-        if (boldMatch[1]) {
-          tokens.push(<span key={keyIdx++}>{boldMatch[1]}</span>);
-        }
-        tokens.push(<strong key={keyIdx++} className="font-semibold text-white">{boldMatch[2]}</strong>);
-        remaining = boldMatch[3];
-      } else if (codeMatch) {
-        if (codeMatch[1]) {
-          tokens.push(<span key={keyIdx++}>{codeMatch[1]}</span>);
-        }
-        tokens.push(
-          <code key={keyIdx++} className="bg-zinc-900 border border-zinc-800 px-1 py-0.5 rounded font-mono text-emerald-400 text-xs">
-            {codeMatch[2]}
-          </code>
-        );
-        remaining = codeMatch[3];
-      } else {
-        tokens.push(<span key={keyIdx++}>{remaining}</span>);
-        break;
-      }
-    }
-    return tokens;
-  };
-
-  const renderMessageContent = (content: string) => {
-    // Split code blocks
-    const parts = content.split(/(```[\s\S]*?```)/g);
-
-    return parts.map((part, index) => {
-      if (part.startsWith('```') && part.endsWith('```')) {
-        const lines = part.slice(3, -3).trim().split('\n');
-        let language = 'code';
-        let code = part.slice(3, -3).trim();
-
-        if (lines.length > 0 && /^[a-zA-Z0-9_-]+$/.test(lines[0])) {
-          language = lines[0];
-          code = lines.slice(1).join('\n');
-        }
-
-        return (
-          <div key={index} className="my-4 border border-zinc-800 rounded-lg overflow-hidden bg-zinc-950 font-mono text-xs">
-            <div className="bg-zinc-900 px-4 py-1.5 text-[10px] text-zinc-500 uppercase tracking-widest flex items-center justify-between border-b border-zinc-850">
-              <span>{language}</span>
-              <FileCode className="w-3.5 h-3.5 text-zinc-600" />
-            </div>
-            <pre className="p-4 overflow-x-auto text-zinc-300">
-              <code>{code}</code>
-            </pre>
-          </div>
-        );
-      } else {
-        const lines = part.split('\n');
-        return (
-          <div key={index} className="space-y-2 font-sans text-sm leading-relaxed text-zinc-300">
-            {lines.map((line, lIdx) => {
-              if (line.trim() === '') return <div key={lIdx} className="h-2" />;
-              
-              // Lists
-              if (line.startsWith('- ') || line.startsWith('* ')) {
-                return (
-                  <ul key={lIdx} className="list-disc pl-5 space-y-1">
-                    <li>{renderStyledText(line.substring(2))}</li>
-                  </ul>
-                );
-              }
-              if (/^\d+\.\s/.test(line)) {
-                const match = line.match(/^(\d+)\.\s(.*)$/);
-                return (
-                  <ol key={lIdx} className="list-decimal pl-5 space-y-1">
-                    <li value={match ? parseInt(match[1]) : undefined}>
-                      {renderStyledText(match ? match[2] : line)}
-                    </li>
-                  </ol>
-                );
-              }
-              // Headings
-              if (line.startsWith('#')) {
-                const hMatch = line.match(/^(#{1,6})\s+(.*)$/);
-                if (hMatch) {
-                  const hLvl = hMatch[1].length;
-                  const hText = renderStyledText(hMatch[2]);
-                  const classes = hLvl === 1 ? 'text-xl font-bold mt-4 mb-2 text-white border-b border-zinc-800 pb-1' :
-                                  hLvl === 2 ? 'text-lg font-bold mt-3 mb-2 text-white' :
-                                  'text-md font-bold mt-2 mb-1 text-zinc-200';
-                  return React.createElement(`h${hLvl}`, { key: lIdx, className: classes }, hText);
-                }
-              }
-
-              return <p key={lIdx}>{renderStyledText(line)}</p>;
-            })}
-          </div>
-        );
-      }
-    });
-  };
-
-  const activeDocsCount = documents.filter(doc => doc.status === 'active').length;
-
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full min-h-screen bg-black flex overflow-hidden">
-      
-      {/* ==========================================
-          SIDEBAR PANEL
-          ========================================== */}
-      <div className="w-64 border-r border-zinc-850 bg-zinc-950 flex flex-col justify-between flex-shrink-0 relative z-20">
-        <div className="flex flex-col flex-1">
-          {/* Logo Brand */}
-          <div className="h-16 px-6 border-b border-zinc-850 flex items-center justify-between">
-            <span className="text-lg font-bold font-mono tracking-tight text-white flex items-center gap-1.5">
-              Docu<span className="text-green-500">Mind</span>
-            </span>
-            <div className="flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-              <span className="text-[9px] text-zinc-500 uppercase tracking-widest font-mono font-medium">Secured</span>
-            </div>
-          </div>
+    <div className="w-full min-h-screen flex overflow-hidden" style={{ background: 'var(--bg)' }}>
 
-          {/* Navigation Items */}
-          <nav className="p-4 space-y-1 flex-1">
-            <button
-              onClick={() => setActiveTab('chat')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left text-sm ${
-                activeTab === 'chat'
-                  ? 'bg-zinc-900 text-white border border-zinc-800'
-                  : 'text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200 border border-transparent'
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 text-green-500" />
-              <div className="flex-1">
-                <p className="font-semibold">AI Workspace</p>
-                <p className="text-[10px] text-zinc-500 font-mono mt-0.5">Isolated Query</p>
-              </div>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50" />
-            </button>
+      {/* ════════════════════════════════════════════════════════════════════
+          SIDEBAR
+          ════════════════════════════════════════════════════════════════════ */}
+      <aside
+        className="w-60 flex flex-col flex-shrink-0 relative z-20"
+        style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)' }}
+      >
+        {/* Brand */}
+        <div
+          className="h-14 px-4 flex items-center justify-between flex-shrink-0"
+          style={{ borderBottom: '1px solid var(--border)' }}
+        >
+          <span className="text-base font-bold tracking-tight font-mono flex items-center gap-1.5"
+                style={{ color: 'var(--text)' }}>
+            <BrainCircuit className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+            Docu<span style={{ color: 'var(--accent)' }}>Mind</span>
+          </span>
 
-            <button
-              onClick={() => setActiveTab('documents')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left text-sm ${
-                activeTab === 'documents'
-                  ? 'bg-zinc-900 text-white border border-zinc-800'
-                  : 'text-zinc-400 hover:bg-zinc-900/50 hover:text-zinc-200 border border-transparent'
-              }`}
-            >
-              <Database className="w-4 h-4 text-green-500" />
-              <div className="flex-1">
-                <p className="font-semibold">Document Vault</p>
-                <p className="text-[10px] text-zinc-500 font-mono mt-0.5">Ingest & Manage</p>
-              </div>
-              <ChevronRight className="w-3.5 h-3.5 opacity-50" />
-            </button>
-          </nav>
+          {/* Theme toggle */}
+          <button
+            onClick={toggle}
+            id="theme-toggle-sidebar"
+            className="w-7 h-7 flex items-center justify-center rounded-lg transition-colors"
+            style={{ color: 'var(--text-3)', background: 'var(--bg-2)' }}
+            title="Toggle theme"
+          >
+            {dark ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+          </button>
         </div>
 
-        {/* User Account Box */}
+        {/* New Chat button */}
+        <div className="p-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <button
+            onClick={startNewChat}
+            id="new-chat-btn"
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
+            style={{
+              background: 'var(--accent-glow)',
+              border    : '1px solid var(--border)',
+              color     : 'var(--accent)',
+            }}
+          >
+            <Plus className="w-4 h-4" />
+            New Chat
+          </button>
+        </div>
+
+        {/* Nav */}
+        <nav className="p-3 space-y-1">
+          {[
+            { key: 'chat' as const,      icon: MessageSquare, label: 'Chat',      sub: `${activeDocsCount} docs active` },
+            { key: 'documents' as const, icon: Database,      label: 'Documents', sub: `${documents.length} uploaded` },
+          ].map(({ key, icon: Icon, label, sub }) => (
+            <button
+              key       = {key}
+              onClick   = {() => setActiveTab(key)}
+              id        = {`nav-${key}`}
+              className = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition-all"
+              style={{
+                background: activeTab === key ? 'var(--bg-2)'  : 'transparent',
+                border    : `1px solid ${activeTab === key ? 'var(--border-2)' : 'transparent'}`,
+                color     : activeTab === key ? 'var(--text)'  : 'var(--text-3)',
+              }}
+            >
+              <Icon className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--accent)' }} />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{label}</p>
+                <p className="text-[10px] font-mono truncate" style={{ color: 'var(--text-4)' }}>{sub}</p>
+              </div>
+            </button>
+          ))}
+        </nav>
+
+        {/* Chat History Panel toggle */}
+        <div className="p-3" style={{ borderTop: '1px solid var(--border)' }}>
+          <button
+            onClick={() => setSessionPanelOpen(!sessionPanelOpen)}
+            id="history-btn"
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all"
+            style={{
+              background: 'var(--bg-2)',
+              border    : '1px solid var(--border)',
+              color     : 'var(--text-3)',
+            }}
+          >
+            <History className="w-3.5 h-3.5" />
+            Chat History
+            <span
+              className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-mono"
+              style={{ background: 'var(--bg-3)', color: 'var(--text-4)' }}
+            >
+              {chatSessions.length}
+            </span>
+          </button>
+        </div>
+
+        {/* User info + Logout */}
         {user && (
-          <div className="p-4 border-t border-zinc-850 bg-zinc-950/90 flex flex-col space-y-3">
-            <div className="flex items-center gap-3">
+          <div
+            className="p-3 mt-auto flex-shrink-0 space-y-3"
+            style={{ borderTop: '1px solid var(--border)' }}
+          >
+            <div className="flex items-center gap-2.5">
               {user.picture_url ? (
-                <img 
-                  src={user.picture_url} 
-                  alt="avatar" 
-                  className="w-10 h-10 rounded-full border border-zinc-800"
-                />
+                <img src={user.picture_url} alt="avatar"
+                     className="w-8 h-8 rounded-full flex-shrink-0"
+                     style={{ border: '1px solid var(--border)' }} />
               ) : (
-                <div className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white uppercase text-sm font-semibold">
-                  {user.email.charAt(0)}
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
+                     style={{ background: 'var(--bg-3)', color: 'var(--text)' }}>
+                  {user.email.charAt(0).toUpperCase()}
                 </div>
               )}
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-white truncate">{user.name || 'DocuMind User'}</p>
-                <p className="text-[10px] text-zinc-500 truncate font-mono mt-0.5">{user.email}</p>
+                <p className="text-xs font-semibold truncate" style={{ color: 'var(--text)' }}>
+                  {user.name || 'User'}
+                </p>
+                <p className="text-[10px] font-mono truncate" style={{ color: 'var(--text-4)' }}>
+                  {user.email}
+                </p>
               </div>
             </div>
+
             <button
               onClick={handleLogout}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-900 hover:bg-red-950/20 hover:text-red-400 border border-zinc-800 hover:border-red-900/30 text-xs font-semibold transition-all duration-250 cursor-pointer"
+              id="logout-btn"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all"
+              style={{
+                background: 'var(--bg-2)',
+                border    : '1px solid var(--border)',
+                color     : 'var(--text-3)',
+              }}
+              onMouseEnter = {e => {
+                (e.currentTarget as HTMLElement).style.color      = 'var(--red)';
+                (e.currentTarget as HTMLElement).style.borderColor = 'rgba(239,68,68,0.3)';
+              }}
+              onMouseLeave = {e => {
+                (e.currentTarget as HTMLElement).style.color      = 'var(--text-3)';
+                (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+              }}
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Terminate Session</span>
+              Sign Out
             </button>
           </div>
         )}
-      </div>
+      </aside>
 
-      {/* ==========================================
-          MAIN CONTENT WORKSPACE
-          ========================================== */}
-      <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        
-        {/* Decorative ambient background lights */}
-        <div className="absolute top-10 right-20 w-80 h-80 bg-green-500/5 rounded-full blur-[100px] pointer-events-none"></div>
-
-        <AnimatePresence mode="wait">
-          {activeTab === 'chat' ? (
-            
-            /* ==========================================
-                CHAT WORKSPACE
-                ========================================== */
-            <motion.div
-              key="chat"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="flex-1 flex min-h-0"
+      {/* ════════════════════════════════════════════════════════════════════
+          CHAT HISTORY SLIDE-OVER PANEL
+          ════════════════════════════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {sessionPanelOpen && (
+          <motion.div
+            initial   = {{ x: -300, opacity: 0 }}
+            animate   = {{ x: 0, opacity: 1 }}
+            exit      = {{ x: -300, opacity: 0 }}
+            transition= {{ type: 'spring', stiffness: 280, damping: 28 }}
+            className = "absolute left-60 top-0 bottom-0 w-64 z-30 flex flex-col"
+            style     = {{ background: 'var(--surface-2)', borderRight: '1px solid var(--border)' }}
+          >
+            {/* Header */}
+            <div
+              className="h-14 px-4 flex items-center justify-between flex-shrink-0"
+              style={{ borderBottom: '1px solid var(--border)' }}
             >
-              {/* Main Chat Panel */}
-              <div className="flex-1 flex flex-col min-w-0 h-full border-r border-zinc-850/60 bg-black/40">
-                {/* Header */}
-                <div className="h-16 px-6 border-b border-zinc-850 flex items-center justify-between bg-zinc-950/10 backdrop-blur-sm flex-shrink-0">
+              <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                Chat History
+              </span>
+              <button
+                onClick={() => setSessionPanelOpen(false)}
+                className="w-7 h-7 flex items-center justify-center rounded-lg"
+                style={{ color: 'var(--text-3)', background: 'var(--bg-2)' }}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Session list */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+              {chatSessions.length === 0 ? (
+                <p className="text-xs text-center py-8 font-mono" style={{ color: 'var(--text-4)' }}>
+                  No previous chats
+                </p>
+              ) : (
+                chatSessions.map(session => (
+                  <button
+                    key       = {session.chat_id}
+                    onClick   = {() => loadChatSession(session.chat_id)}
+                    className = "w-full group flex items-start gap-2 px-3 py-2.5 rounded-xl text-left transition-all"
+                    style={{
+                      background  : currentChatId === session.chat_id ? 'var(--bg-3)' : 'transparent',
+                      border      : `1px solid ${currentChatId === session.chat_id ? 'var(--border-2)' : 'transparent'}`,
+                    }}
+                    onMouseEnter = {e => { if (currentChatId !== session.chat_id) (e.currentTarget as HTMLElement).style.background = 'var(--bg-2)'; }}
+                    onMouseLeave = {e => { if (currentChatId !== session.chat_id) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: 'var(--text-4)' }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate" style={{ color: 'var(--text)' }}>
+                        {session.title}
+                      </p>
+                      <p className="text-[10px] font-mono mt-0.5" style={{ color: 'var(--text-4)' }}>
+                        {new Date(session.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <button
+                      onClick    = {(e) => deleteChatSession(session.chat_id, e)}
+                      className  = "opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded flex-shrink-0 transition-opacity"
+                      style      = {{ color: 'var(--red)' }}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </button>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ════════════════════════════════════════════════════════════════════
+          MAIN CONTENT AREA
+          ════════════════════════════════════════════════════════════════════ */}
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        <AnimatePresence mode="wait">
+
+          {/* ──────────────────────────────────────────────────────────────────
+              CHAT VIEW
+              ────────────────────────────────────────────────────────────────── */}
+          {activeTab === 'chat' && (
+            <motion.div
+              key        = "chat"
+              initial    = {{ opacity: 0, x: 16 }}
+              animate    = {{ opacity: 1, x: 0 }}
+              exit       = {{ opacity: 0, x: -16 }}
+              transition = {{ duration: 0.2 }}
+              className  = "flex-1 flex min-h-0 h-screen"
+            >
+              {/* Chat column */}
+              <div
+                className="flex-1 flex flex-col min-w-0"
+                style={{ borderRight: selectedCitation ? '1px solid var(--border)' : 'none' }}
+              >
+                {/* Chat header */}
+                <div
+                  className="h-14 px-5 flex items-center justify-between flex-shrink-0"
+                  style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}
+                >
                   <div>
-                    <h2 className="text-sm font-semibold text-white font-mono uppercase tracking-wider">
-                      Secured Chat Console
+                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                      {currentChatId ? `Chat #${currentChatId}` : 'New Conversation'}
                     </h2>
-                    <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                      Isolated from other users. Currently indexing {activeDocsCount} documents.
+                    <p className="text-[10px] font-mono" style={{ color: 'var(--text-4)' }}>
+                      {activeDocsCount} document{activeDocsCount !== 1 ? 's' : ''} in scope
                     </p>
                   </div>
+
+                  {chatHistory.length > 0 && (
+                    <button
+                      onClick   = {startNewChat}
+                      className = "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                      style={{
+                        background: 'var(--bg-2)',
+                        border    : '1px solid var(--border)',
+                        color     : 'var(--text-3)',
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      New
+                    </button>
+                  )}
                 </div>
 
-                {/* Message Stream */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-black/10">
-                  {chatHistory.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-8 max-w-md mx-auto space-y-4">
-                      <div className="w-12 h-12 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-center text-green-500 shadow-[0_0_15px_rgba(34,197,94,0.05)]">
-                        <Sparkles className="w-6 h-6 animate-pulse" />
+                {/* Message stream */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-5"
+                     style={{ background: 'var(--bg)' }}>
+
+                  {/* Empty state */}
+                  {chatHistory.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-center space-y-4 max-w-sm mx-auto">
+                      <div
+                        className="w-12 h-12 rounded-2xl flex items-center justify-center"
+                        style={{
+                          background: 'var(--accent-glow)',
+                          border    : '1px solid var(--border)',
+                        }}
+                      >
+                        <BrainCircuit className="w-6 h-6" style={{ color: 'var(--accent)' }} />
                       </div>
-                      <div className="space-y-2">
-                        <h3 className="text-white text-sm font-semibold uppercase tracking-wider font-mono">
-                          Vault Assistant Standby
+                      <div className="space-y-1.5">
+                        <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                          Ask anything about your documents
                         </h3>
-                        <p className="text-zinc-500 text-xs leading-relaxed">
-                          Ask questions regarding any of your uploaded files. All context matches are verified and constrained strictly to your documents.
+                        <p className="text-xs leading-relaxed" style={{ color: 'var(--text-3)' }}>
+                          Answers are generated strictly from your uploaded files — no external knowledge used.
                         </p>
                       </div>
                       {activeDocsCount === 0 && (
-                        <button 
-                          onClick={() => setActiveTab('documents')}
-                          className="px-4 py-2 bg-green-500 hover:bg-green-600 text-black text-xs font-semibold rounded-lg transition-colors border border-green-400 shadow-[0_0_10px_rgba(34,197,94,0.2)]"
+                        <button
+                          onClick   = {() => setActiveTab('documents')}
+                          className = "px-4 py-2 rounded-xl text-xs font-semibold transition-all"
+                          style={{
+                            background: 'var(--accent)',
+                            color     : '#fff',
+                          }}
                         >
-                          Upload documents first
+                          Upload documents first →
                         </button>
                       )}
                     </div>
-                  ) : (
-                    chatHistory.map((msg, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, y: 15 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className={`flex gap-4 max-w-3xl ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
+                  )}
+
+                  {/* Messages */}
+                  {chatHistory.map((msg, idx) => (
+                    <motion.div
+                      key        = {idx}
+                      initial    = {{ opacity: 0, y: 12 }}
+                      animate    = {{ opacity: 1, y: 0 }}
+                      transition = {{ duration: 0.25 }}
+                      className  = {`flex gap-3 max-w-3xl ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : ''}`}
+                    >
+                      {/* Avatar */}
+                      <div
+                        className="w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold font-mono"
+                        style={{
+                          background: msg.role === 'user' ? 'var(--bg-3)' : 'var(--accent-glow)',
+                          border    : `1px solid ${msg.role === 'user' ? 'var(--border-2)' : 'var(--accent)'}`,
+                          color     : msg.role === 'user' ? 'var(--text-2)' : 'var(--accent)',
+                        }}
                       >
-                        {/* Avatar */}
-                        <div className={`w-8 h-8 rounded-full border flex-shrink-0 flex items-center justify-center text-xs font-semibold uppercase font-mono ${
-                          msg.role === 'user' 
-                            ? 'bg-zinc-900 border-zinc-700 text-green-400' 
-                            : 'bg-green-950/20 border-green-500/40 text-green-400'
-                        }`}>
-                          {msg.role === 'user' ? 'U' : 'AI'}
-                        </div>
+                        {msg.role === 'user' ? 'U' : 'AI'}
+                      </div>
 
-                        {/* Content Card */}
-                        <div className={`flex flex-col space-y-2 max-w-[85%] ${msg.role === 'user' ? 'items-end' : ''}`}>
-                          <div className={`p-4 rounded-xl border ${
-                            msg.role === 'user'
-                              ? 'bg-zinc-900/40 border-zinc-850/80 rounded-tr-none'
-                              : 'bg-zinc-950/70 border-zinc-850/80 rounded-tl-none shadow-lg'
-                          }`}>
-                            <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono mb-2">
-                              {msg.role === 'user' ? 'User Prompt' : 'AI Assistant'}
+                      {/* Bubble */}
+                      <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        <div
+                          className="px-4 py-3 rounded-2xl"
+                          style={{
+                            background: msg.role === 'user' ? 'var(--bg-3)' : 'var(--surface)',
+                            border    : '1px solid var(--border)',
+                            borderTopRightRadius: msg.role === 'user' ? 4 : undefined,
+                            borderTopLeftRadius : msg.role !== 'user' ? 4 : undefined,
+                          }}
+                        >
+                          {msg.content ? (
+                            <div className={msg.streaming ? 'cursor-blink' : ''}>
+                              {renderMessageContent(msg.content)}
                             </div>
-                            {renderMessageContent(msg.content)}
-                          </div>
-
-                          {/* Source Citations */}
-                          {msg.sources && msg.sources.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5 mt-1">
-                              <span className="text-[9px] text-zinc-500 font-mono self-center mr-1 uppercase">Sources:</span>
-                              {msg.sources.map((src, sIdx) => (
-                                <button
-                                  key={sIdx}
-                                  onClick={() => setSelectedSource(src)}
-                                  className="px-2 py-0.5 text-[10px] bg-zinc-900 hover:bg-zinc-850 border border-zinc-800 text-zinc-400 hover:text-green-400 rounded transition-all font-mono"
-                                >
-                                  {src.filename} {src.page ? `(p. ${src.page})` : ''}
-                                </button>
-                              ))}
+                          ) : (
+                            // Still waiting for first token
+                            <div className="flex items-center gap-2 py-0.5">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--accent)' }} />
+                              <span className="text-xs font-mono" style={{ color: 'var(--text-3)' }}>
+                                Searching…
+                              </span>
                             </div>
                           )}
                         </div>
-                      </motion.div>
-                    ))
-                  )}
 
-                  {/* Thinking Loader */}
-                  {isChatting && (
-                    <div className="flex gap-4 max-w-lg">
-                      <div className="w-8 h-8 rounded-full border bg-green-950/20 border-green-500/30 text-green-400 flex items-center justify-center text-xs font-semibold animate-pulse">
-                        AI
+                        {/* Citations */}
+                        {msg.sources && msg.sources.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className="text-[9px] font-mono self-center" style={{ color: 'var(--text-4)' }}>
+                              Sources:
+                            </span>
+                            {msg.sources.map((src, sIdx) => (
+                              <button
+                                key       = {sIdx}
+                                onClick   = {() => setSelectedCitation(src)}
+                                className = "px-2 py-0.5 text-[10px] rounded-lg font-mono transition-all"
+                                style={{
+                                  background: 'var(--bg-2)',
+                                  border    : '1px solid var(--border)',
+                                  color     : 'var(--text-3)',
+                                }}
+                                onMouseEnter = {e => {
+                                  (e.currentTarget as HTMLElement).style.color       = 'var(--accent)';
+                                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)';
+                                }}
+                                onMouseLeave = {e => {
+                                  (e.currentTarget as HTMLElement).style.color       = 'var(--text-3)';
+                                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                                }}
+                              >
+                                {src.filename}{src.page ? ` · p${src.page}` : ''}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="p-4 rounded-xl border bg-zinc-950/50 border-zinc-900 rounded-tl-none flex items-center gap-2">
-                        <Loader2 className="w-3.5 h-3.5 text-green-500 animate-spin" />
-                        <span className="text-xs text-zinc-500 font-mono uppercase tracking-widest">Searching isolated chunks...</span>
-                      </div>
-                    </div>
-                  )}
+                    </motion.div>
+                  ))}
+
                   <div ref={chatEndRef} />
                 </div>
 
-                {/* Prompt Form */}
-                <div className="p-4 border-t border-zinc-850/60 bg-zinc-950/20 backdrop-blur flex-shrink-0">
-                  <form onSubmit={handleChatSubmit} className="max-w-3xl mx-auto flex gap-2 relative">
-                    <input
-                      type="text"
-                      value={query}
-                      onChange={e => setQuery(e.target.value)}
-                      disabled={activeDocsCount === 0 || isChatting}
-                      placeholder={
-                        activeDocsCount === 0 
-                          ? "Vault is empty. Ingest documents to query..." 
-                          : "Input query regarding your files..."
-                      }
-                      className="flex-1 h-12 bg-zinc-950 border border-zinc-800 rounded-xl pl-4 pr-12 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 disabled:opacity-30 disabled:bg-neutral-900/10 font-sans shadow-[inset_0_0_10px_rgba(0,255,65,0.01)]"
-                    />
-                    <button
-                      type="submit"
-                      disabled={activeDocsCount === 0 || !query.trim() || isChatting}
-                      className="absolute right-2 top-2 h-8 w-8 flex items-center justify-center rounded-lg bg-green-500 hover:bg-green-600 disabled:bg-zinc-800 text-black disabled:text-zinc-600 transition-all cursor-pointer shadow-[0_0_10px_rgba(34,197,94,0.1)]"
+                {/* Input bar */}
+                <div
+                  className="p-4 flex-shrink-0"
+                  style={{ borderTop: '1px solid var(--border)', background: 'var(--surface)' }}
+                >
+                  <form
+                    onSubmit  = {handleChatSubmit}
+                    className = "max-w-3xl mx-auto flex items-end gap-2"
+                  >
+                    <div
+                      className="flex-1 flex items-end rounded-xl overflow-hidden"
+                      style={{ background: 'var(--bg-2)', border: '1px solid var(--border)' }}
                     >
-                      <Send className="w-4 h-4" />
+                      <textarea
+                        ref         = {textareaRef}
+                        rows        = {1}
+                        value       = {query}
+                        onChange    = {e => setQuery(e.target.value)}
+                        onInput     = {handleTextareaInput}
+                        onKeyDown   = {handleKeyDown}
+                        disabled    = {isChatting}
+                        placeholder = {
+                          activeDocsCount === 0
+                            ? 'Upload documents to start chatting…'
+                            : 'Ask a question about your documents…'
+                        }
+                        className   = "flex-1 py-3 px-4 text-sm resize-none bg-transparent outline-none font-sans"
+                        style       = {{ color: 'var(--text)', maxHeight: 140 }}
+                        id          = "chat-input"
+                      />
+                    </div>
+
+                    <button
+                      type      = "submit"
+                      disabled  = {!query.trim() || isChatting}
+                      id        = "chat-send-btn"
+                      className = "w-10 h-10 flex items-center justify-center rounded-xl transition-all flex-shrink-0"
+                      style={{
+                        background: query.trim() && !isChatting ? 'var(--accent)' : 'var(--bg-3)',
+                        color     : query.trim() && !isChatting ? '#fff' : 'var(--text-4)',
+                        cursor    : query.trim() && !isChatting ? 'pointer' : 'default',
+                      }}
+                    >
+                      {isChatting
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Send className="w-4 h-4" />
+                      }
                     </button>
                   </form>
-                  <p className="text-center text-[9px] text-zinc-600 font-mono uppercase tracking-widest mt-2">
-                    Queries are restricted to metadata tagged with user_id = {user?.id}
+
+                  <p className="text-center text-[10px] mt-2 font-mono" style={{ color: 'var(--text-4)' }}>
+                    Press Enter to send · Shift+Enter for new line
                   </p>
                 </div>
               </div>
 
-              {/* Source Details Sidebar Drawer */}
+              {/* Citation Drawer */}
               <AnimatePresence>
-                {selectedSource && (
+                {selectedCitation && (
                   <motion.div
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: 340 }}
-                    exit={{ opacity: 0, width: 0 }}
-                    className="border-l border-zinc-850 bg-zinc-950 flex flex-col h-full flex-shrink-0 z-10 overflow-hidden"
+                    initial    = {{ opacity: 0, width: 0 }}
+                    animate    = {{ opacity: 1, width: 320 }}
+                    exit       = {{ opacity: 0, width: 0 }}
+                    transition = {{ type: 'spring', stiffness: 280, damping: 28 }}
+                    className  = "flex-shrink-0 flex flex-col overflow-hidden"
+                    style      = {{ background: 'var(--surface)' }}
                   >
-                    <div className="h-16 px-4 border-b border-zinc-850 flex items-center justify-between bg-zinc-900/20 flex-shrink-0">
+                    {/* Drawer Header */}
+                    <div
+                      className="h-14 px-4 flex items-center justify-between flex-shrink-0"
+                      style={{ borderBottom: '1px solid var(--border)' }}
+                    >
                       <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-green-500" />
-                        <span className="text-xs font-semibold text-white uppercase tracking-wider font-mono">Source Match</span>
+                        <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
+                        <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                          Source
+                        </span>
                       </div>
-                      <button 
-                        onClick={() => setSelectedSource(null)}
-                        className="text-[10px] text-zinc-400 hover:text-white uppercase font-mono px-2 py-1 rounded bg-zinc-900 border border-zinc-800"
+                      <button
+                        onClick   = {() => setSelectedCitation(null)}
+                        className = "w-7 h-7 flex items-center justify-center rounded-lg transition-colors"
+                        style     = {{ color: 'var(--text-3)', background: 'var(--bg-2)' }}
                       >
-                        Close
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                    {/* Drawer Content */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                       <div>
-                        <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">Document Name</p>
-                        <p className="text-xs font-semibold text-white mt-1 break-all">{selectedSource.filename}</p>
+                        <p className="text-[10px] font-mono uppercase tracking-widest mb-1" style={{ color: 'var(--text-4)' }}>
+                          File
+                        </p>
+                        <p className="text-sm font-semibold break-all" style={{ color: 'var(--text)' }}>
+                          {selectedCitation.filename}
+                        </p>
                       </div>
-                      
-                      {selectedSource.page && (
+
+                      {selectedCitation.page && (
                         <div>
-                          <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">Page Reference</p>
-                          <p className="text-xs text-white font-semibold mt-1">Page {selectedSource.page}</p>
+                          <p className="text-[10px] font-mono uppercase tracking-widest mb-1" style={{ color: 'var(--text-4)' }}>
+                            Page
+                          </p>
+                          <span
+                            className="text-xs px-2 py-0.5 rounded-lg font-mono"
+                            style={{ background: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid var(--border)' }}
+                          >
+                            Page {selectedCitation.page}
+                          </span>
                         </div>
                       )}
 
-                      <div className="border-t border-zinc-850/60 pt-4">
-                        <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono mb-2">Retrieved Context Chunk</p>
-                        <div className="bg-black/60 border border-zinc-900 rounded-lg p-3 text-xs leading-relaxed text-zinc-400 font-sans select-text">
-                          {selectedSource.content}
+                      <div>
+                        <p className="text-[10px] font-mono uppercase tracking-widest mb-1" style={{ color: 'var(--text-4)' }}>
+                          Relevance Score
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="flex-1 h-1.5 rounded-full overflow-hidden"
+                            style={{ background: 'var(--bg-3)' }}
+                          >
+                            <div
+                              className="h-full rounded-full transition-all"
+                              style={{
+                                width     : `${Math.min(selectedCitation.score * 100, 100)}%`,
+                                background: 'var(--accent)',
+                              }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono" style={{ color: 'var(--text-3)' }}>
+                            {(selectedCitation.score * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-[10px] font-mono uppercase tracking-widest mb-2" style={{ color: 'var(--text-4)' }}>
+                          Matched Chunk
+                        </p>
+                        <div
+                          className="p-3 rounded-xl text-xs leading-relaxed select-text"
+                          style={{
+                            background: 'var(--bg-2)',
+                            border    : '1px solid var(--border)',
+                            color     : 'var(--text-2)',
+                          }}
+                        >
+                          {selectedCitation.preview}
                         </div>
                       </div>
                     </div>
@@ -684,162 +1123,234 @@ export default function Dashboard() {
                 )}
               </AnimatePresence>
             </motion.div>
-          ) : (
-            
-            /* ==========================================
-                DOCUMENTS VAULT & UPLOAD
-                ========================================== */
+          )}
+
+          {/* ──────────────────────────────────────────────────────────────────
+              DOCUMENTS VIEW
+              ────────────────────────────────────────────────────────────────── */}
+          {activeTab === 'documents' && (
             <motion.div
-              key="documents"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="flex-1 flex flex-col p-8 max-w-5xl mx-auto w-full space-y-8 overflow-y-auto custom-scrollbar"
+              key        = "documents"
+              initial    = {{ opacity: 0, x: 16 }}
+              animate    = {{ opacity: 1, x: 0 }}
+              exit       = {{ opacity: 0, x: -16 }}
+              transition = {{ duration: 0.2 }}
+              className  = "flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6 max-w-4xl mx-auto w-full"
             >
               {/* Header */}
               <div>
-                <h2 className="text-2xl font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
-                  <Database className="w-6 h-6 text-green-500" />
-                  Document Vault
+                <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+                  <Database className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+                  Documents
                 </h2>
-                <p className="text-zinc-500 text-xs mt-1">
-                  Upload and manage documents. Files are chunked and secured under your private ID.
+                <p className="text-sm mt-1" style={{ color: 'var(--text-3)' }}>
+                  Upload files to give DocuMind context to answer your questions.
                 </p>
               </div>
 
-              {/* Upload Drop Zone Card */}
-              <div 
-                onDragEnter={handleDrag}
-                onDragOver={handleDrag}
-                onDragLeave={handleDrag}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`p-10 border border-dashed rounded-2xl flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
-                  dragActive 
-                    ? 'border-green-500 bg-green-950/10' 
-                    : 'border-zinc-800 bg-zinc-950/40 hover:border-zinc-700 hover:bg-zinc-950/60'
-                }`}
+              {/* Upload Drop Zone */}
+              <div
+                onDragEnter = {handleDrag}
+                onDragOver  = {handleDrag}
+                onDragLeave = {handleDrag}
+                onDrop      = {handleDrop}
+                onClick     = {() => fileInputRef.current?.click()}
+                id          = "upload-dropzone"
+                className   = "p-10 rounded-2xl flex flex-col items-center justify-center text-center cursor-pointer transition-all"
+                style={{
+                  background: dragActive ? 'var(--accent-glow)' : 'var(--surface)',
+                  border    : `2px dashed ${dragActive ? 'var(--accent)' : 'var(--border-2)'}`,
+                }}
               >
                 <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileChange}
-                  className="hidden"
-                  accept=".pdf,.txt,.csv,.xlsx,.docx,.json"
+                  type     = "file"
+                  ref      = {fileInputRef}
+                  onChange = {e => e.target.files?.[0] && uploadFile(e.target.files[0])}
+                  className= "hidden"
+                  accept   = ".pdf,.txt,.csv,.xlsx,.docx,.json"
                 />
 
-                <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-4 shadow-[0_0_15px_rgba(0,0,0,0.5)]">
-                  {uploading ? (
-                    <Loader2 className="w-6 h-6 text-green-500 animate-spin" />
-                  ) : (
-                    <UploadCloud className="w-6 h-6 text-green-500" />
-                  )}
+                <div
+                  className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
+                  style={{ background: 'var(--bg-2)', border: '1px solid var(--border)' }}
+                >
+                  {uploading
+                    ? <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--accent)' }} />
+                    : <UploadCloud className="w-6 h-6" style={{ color: 'var(--accent)' }} />
+                  }
                 </div>
 
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-white">
-                    {uploading ? 'Parsing and generating embeddings...' : 'Drag & drop file or click to select'}
-                  </p>
-                  <p className="text-xs text-zinc-500">
-                    Supports PDF, TXT, CSV, XLSX, DOCX, JSON up to 15MB
-                  </p>
-                </div>
+                <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                  {uploading ? 'Processing…' : 'Drop a file here, or click to browse'}
+                </p>
+                <p className="text-xs mt-1" style={{ color: 'var(--text-4)' }}>
+                  PDF, DOCX, TXT, CSV, XLSX, JSON · Max 15 MB
+                </p>
 
                 {uploadError && (
                   <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="mt-4 p-2.5 rounded bg-red-950/20 border border-red-900/40 text-red-300 text-xs flex items-center gap-2"
-                    onClick={e => e.stopPropagation()}
+                    initial   = {{ opacity: 0 }}
+                    animate   = {{ opacity: 1 }}
+                    className = "mt-4 px-3 py-2 rounded-xl flex items-center gap-2 text-xs"
+                    style={{
+                      background: 'rgba(239,68,68,0.08)',
+                      border    : '1px solid rgba(239,68,68,0.2)',
+                      color     : 'var(--red)',
+                    }}
+                    onClick   = {e => e.stopPropagation()}
                   >
-                    <AlertTriangle className="w-4 h-4 text-red-400" />
-                    <span>{uploadError}</span>
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    {uploadError}
                   </motion.div>
                 )}
 
                 {uploadSuccess && (
                   <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="mt-4 p-2.5 rounded bg-green-950/20 border border-green-900/40 text-green-300 text-xs flex items-center gap-2"
-                    onClick={e => e.stopPropagation()}
+                    initial   = {{ opacity: 0 }}
+                    animate   = {{ opacity: 1 }}
+                    className = "mt-4 px-3 py-2 rounded-xl flex items-center gap-2 text-xs"
+                    style={{
+                      background: 'var(--green-glow)',
+                      border    : '1px solid rgba(16,185,129,0.2)',
+                      color     : 'var(--green)',
+                    }}
+                    onClick   = {e => e.stopPropagation()}
                   >
-                    <CheckCircle className="w-4 h-4 text-green-400" />
-                    <span>{uploadSuccess}</span>
+                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                    {uploadSuccess}
                   </motion.div>
                 )}
               </div>
 
-              {/* Table / Grid list */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-white font-mono uppercase tracking-widest">
-                  Vault Inventory ({documents.length} files)
+              {/* Document list */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text)' }}>
+                  Uploaded files
+                  <span className="ml-2 text-xs font-mono" style={{ color: 'var(--text-4)' }}>
+                    ({documents.length})
+                  </span>
                 </h3>
 
                 {loadingDocs ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-zinc-500 space-y-2">
-                    <Loader2 className="w-6 h-6 animate-spin text-green-500" />
-                    <span className="text-xs font-mono uppercase tracking-wider">Syncing database...</span>
+                  <div className="flex items-center justify-center py-12 gap-2" style={{ color: 'var(--text-3)' }}>
+                    <Loader2 className="w-5 h-5 animate-spin" style={{ color: 'var(--accent)' }} />
+                    <span className="text-xs font-mono">Loading…</span>
                   </div>
                 ) : documents.length === 0 ? (
-                  <div className="border border-zinc-850 rounded-xl bg-zinc-950/30 p-12 text-center flex flex-col items-center justify-center space-y-3">
-                    <FileText className="w-8 h-8 text-zinc-700" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-zinc-400">No documents indexed</p>
-                      <p className="text-xs text-zinc-600">Your secure workspace requires source files to support RAG operations.</p>
-                    </div>
+                  <div
+                    className="rounded-2xl p-12 flex flex-col items-center text-center space-y-2"
+                    style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}
+                  >
+                    <FileText className="w-8 h-8" style={{ color: 'var(--text-4)' }} />
+                    <p className="text-sm font-medium" style={{ color: 'var(--text-3)' }}>
+                      No documents uploaded yet
+                    </p>
+                    <p className="text-xs" style={{ color: 'var(--text-4)' }}>
+                      Upload a file above to get started.
+                    </p>
                   </div>
                 ) : (
-                  <div className="border border-zinc-850 rounded-xl bg-zinc-950/20 overflow-hidden">
-                    <table className="w-full text-left border-collapse text-xs select-text">
+                  <div
+                    className="rounded-2xl overflow-hidden"
+                    style={{ border: '1px solid var(--border)' }}
+                  >
+                    <table className="w-full text-left text-xs border-collapse">
                       <thead>
-                        <tr className="bg-zinc-900/40 border-b border-zinc-850/80 text-zinc-400 font-mono uppercase tracking-wider">
-                          <th className="p-4 font-semibold">Filename</th>
-                          <th className="p-4 font-semibold">Upload Date</th>
-                          <th className="p-4 font-semibold">Ingest Status</th>
-                          <th className="p-4 font-semibold text-right">Action</th>
+                        <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+                          {['File', 'Uploaded', 'Status', ''].map(h => (
+                            <th
+                              key     = {h}
+                              className="px-4 py-3 font-semibold font-mono uppercase tracking-wider text-[10px]"
+                              style   = {{ color: 'var(--text-3)' }}
+                            >
+                              {h}
+                            </th>
+                          ))}
                         </tr>
                       </thead>
                       <tbody>
                         {documents.map((doc, idx) => (
-                          <tr 
-                            key={doc.id} 
-                            className={`border-b border-zinc-850/40 transition-colors ${
-                              idx % 2 === 0 ? 'bg-zinc-950/10' : 'bg-transparent'
-                            }`}
+                          <tr
+                            key       = {doc.id}
+                            style={{
+                              background  : idx % 2 === 0 ? 'var(--surface)' : 'var(--surface-2)',
+                              borderBottom: '1px solid var(--border)',
+                            }}
                           >
-                            <td className="p-4 font-semibold text-white flex items-center gap-2.5">
-                              <FileText className="w-4 h-4 text-green-500/80" />
-                              <span className="truncate max-w-xs md:max-w-md" title={doc.filename}>{doc.filename}</span>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <FileText className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--accent)' }} />
+                                <span
+                                  className="font-medium truncate max-w-xs"
+                                  title    = {doc.filename}
+                                  style    = {{ color: 'var(--text)' }}
+                                >
+                                  {doc.filename}
+                                </span>
+                              </div>
                             </td>
-                            <td className="p-4 text-zinc-500 font-mono">
-                              {new Date(doc.upload_timestamp).toLocaleString()}
+
+                            <td className="px-4 py-3 font-mono" style={{ color: 'var(--text-3)' }}>
+                              {new Date(doc.upload_timestamp).toLocaleDateString()}
                             </td>
-                            <td className="p-4">
+
+                            <td className="px-4 py-3">
                               {doc.status === 'active' && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-950/40 text-green-400 border border-green-900/50 shadow-[0_0_10px_rgba(34,197,94,0.05)]">
-                                  <span className="w-1 h-1 rounded-full bg-green-400"></span>
-                                  Active (Ready)
+                                <span
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                  style={{
+                                    background: 'var(--green-glow)',
+                                    border    : '1px solid rgba(16,185,129,0.25)',
+                                    color     : 'var(--green)',
+                                  }}
+                                >
+                                  <span className="w-1 h-1 rounded-full" style={{ background: 'var(--green)' }} />
+                                  Ready
                                 </span>
                               )}
                               {doc.status === 'processing' && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/40 text-amber-400 border border-amber-900/50 animate-pulse">
+                                <span
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold animate-pulse"
+                                  style={{
+                                    background: 'rgba(251,191,36,0.08)',
+                                    border    : '1px solid rgba(251,191,36,0.25)',
+                                    color     : 'var(--amber)',
+                                  }}
+                                >
                                   <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                                  Ingesting...
+                                  Processing
                                 </span>
                               )}
                               {doc.status === 'error' && (
-                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-950/40 text-red-400 border border-red-900/50">
-                                  <AlertTriangle className="w-2.5 h-2.5 text-red-400" />
+                                <span
+                                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                  style={{
+                                    background: 'rgba(239,68,68,0.08)',
+                                    border    : '1px solid rgba(239,68,68,0.25)',
+                                    color     : 'var(--red)',
+                                  }}
+                                >
+                                  <AlertTriangle className="w-2.5 h-2.5" />
                                   Failed
                                 </span>
                               )}
                             </td>
-                            <td className="p-4 text-right">
+
+                            <td className="px-4 py-3 text-right">
                               <button
-                                onClick={() => handleDeleteDocument(doc.id)}
-                                className="p-2 rounded bg-zinc-900 hover:bg-red-950/30 hover:text-red-400 border border-zinc-800 hover:border-red-900/40 transition-all cursor-pointer"
-                                title="Delete document"
+                                onClick   = {() => handleDeleteDocument(doc.id)}
+                                id        = {`delete-doc-${doc.id}`}
+                                className = "w-7 h-7 flex items-center justify-center rounded-lg transition-all ml-auto"
+                                style     = {{ background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-3)' }}
+                                title     = "Delete"
+                                onMouseEnter = {e => {
+                                  (e.currentTarget as HTMLElement).style.color       = 'var(--red)';
+                                  (e.currentTarget as HTMLElement).style.borderColor  = 'rgba(239,68,68,0.3)';
+                                }}
+                                onMouseLeave = {e => {
+                                  (e.currentTarget as HTMLElement).style.color       = 'var(--text-3)';
+                                  (e.currentTarget as HTMLElement).style.borderColor  = 'var(--border)';
+                                }}
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -853,6 +1364,7 @@ export default function Dashboard() {
               </div>
             </motion.div>
           )}
+
         </AnimatePresence>
       </div>
     </div>

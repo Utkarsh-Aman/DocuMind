@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DocuMind - Secure AI Document RAG Console",
-  description: "Enterprise-grade isolated document intelligence vault with multi-tenant Google verification.",
+  title: "DocuMind — AI Document Assistant",
+  description: "Secure multi-user RAG application. Upload documents and get instant, cited AI answers.",
 };
 
 export default function RootLayout({
@@ -26,8 +26,31 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      {/*
+        suppressHydrationWarning is needed because we set the 'dark' class
+        on <html> from localStorage before React hydrates. Without it Next.js
+        would log a mismatch warning.
+      */}
+      <head>
+        {/* Inline script: apply dark class BEFORE paint to avoid flash */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var theme = localStorage.getItem('theme') || 'dark';
+                  if (theme === 'dark') document.documentElement.classList.add('dark');
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body className="min-h-full flex flex-col bg-[--bg] text-[--text]">
+        {children}
+      </body>
     </html>
   );
 }
