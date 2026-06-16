@@ -22,6 +22,7 @@ import {
   ExternalLink,
   X,
   History,
+  Menu,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -221,6 +222,7 @@ export default function Dashboard() {
   const [chatSessions,   setChatSessions]   = useState<ChatSession[]>([]);
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
   const [selectedCitation, setSelectedCitation] = useState<Citation | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Upload state
   const [dragActive,     setDragActive]     = useState(false);
@@ -358,6 +360,7 @@ export default function Dashboard() {
     setSelectedCitation(null);
     setActiveTab('chat');
     setSessionPanelOpen(false);
+    setMobileMenuOpen(false);
   };
 
   const handleLogout = async () => {
@@ -574,8 +577,20 @@ export default function Dashboard() {
       {/* ════════════════════════════════════════════════════════════════════
           SIDEBAR
           ════════════════════════════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setMobileMenuOpen(false)}
+            className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       <aside
-        className="w-60 flex flex-col flex-shrink-0 relative z-20"
+        className={`fixed inset-y-0 left-0 z-40 w-64 transform ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 md:relative md:translate-x-0 md:w-60 md:flex flex-col flex-shrink-0`}
         style={{ background: 'var(--surface)', borderRight: '1px solid var(--border)' }}
       >
         {/* Brand */}
@@ -626,7 +641,7 @@ export default function Dashboard() {
           ].map(({ key, icon: Icon, label, sub }) => (
             <button
               key       = {key}
-              onClick   = {() => setActiveTab(key)}
+              onClick   = {() => { setActiveTab(key); setMobileMenuOpen(false); }}
               id        = {`nav-${key}`}
               className = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-sm transition-all"
               style={{
@@ -729,7 +744,7 @@ export default function Dashboard() {
             animate   = {{ x: 0, opacity: 1 }}
             exit      = {{ x: -300, opacity: 0 }}
             transition= {{ type: 'spring', stiffness: 280, damping: 28 }}
-            className = "absolute left-60 top-0 bottom-0 w-64 z-30 flex flex-col"
+            className = "absolute left-0 md:left-60 top-0 bottom-0 w-[85%] md:w-64 z-50 md:z-30 flex flex-col shadow-2xl md:shadow-none"
             style     = {{ background: 'var(--surface-2)', borderRight: '1px solid var(--border)' }}
           >
             {/* Header */}
@@ -817,16 +832,25 @@ export default function Dashboard() {
               >
                 {/* Chat header */}
                 <div
-                  className="h-14 px-5 flex items-center justify-between flex-shrink-0"
+                  className="h-14 px-3 md:px-5 flex items-center justify-between flex-shrink-0"
                   style={{ borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}
                 >
-                  <div>
-                    <h2 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-                      {currentChatId ? `Chat #${currentChatId}` : 'New Conversation'}
-                    </h2>
-                    <p className="text-[10px] font-mono" style={{ color: 'var(--text-4)' }}>
-                      {activeDocsCount} document{activeDocsCount !== 1 ? 's' : ''} in scope
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setMobileMenuOpen(true)}
+                      className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg"
+                      style={{ color: 'var(--text-3)', background: 'var(--bg-2)' }}
+                    >
+                      <Menu className="w-4 h-4" />
+                    </button>
+                    <div>
+                      <h2 className="text-sm font-semibold truncate max-w-[150px] md:max-w-none" style={{ color: 'var(--text)' }}>
+                        {currentChatId ? `Chat #${currentChatId}` : 'New Conversation'}
+                      </h2>
+                      <p className="text-[10px] font-mono" style={{ color: 'var(--text-4)' }}>
+                        {activeDocsCount} document{activeDocsCount !== 1 ? 's' : ''} in scope
+                      </p>
+                    </div>
                   </div>
 
                   {chatHistory.length > 0 && (
@@ -840,7 +864,7 @@ export default function Dashboard() {
                       }}
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      New
+                      <span className="hidden md:inline">New</span>
                     </button>
                   )}
                 </div>
@@ -1027,19 +1051,28 @@ export default function Dashboard() {
               {/* Citation Drawer */}
               <AnimatePresence>
                 {selectedCitation && (
-                  <motion.div
-                    initial    = {{ opacity: 0, width: 0 }}
-                    animate    = {{ opacity: 1, width: 320 }}
-                    exit       = {{ opacity: 0, width: 0 }}
-                    transition = {{ type: 'spring', stiffness: 280, damping: 28 }}
-                    className  = "flex-shrink-0 flex flex-col overflow-hidden"
-                    style      = {{ background: 'var(--surface)' }}
-                  >
-                    {/* Drawer Header */}
-                    <div
-                      className="h-14 px-4 flex items-center justify-between flex-shrink-0"
-                      style={{ borderBottom: '1px solid var(--border)' }}
+                  <>
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      onClick={() => setSelectedCitation(null)}
+                      className="absolute inset-0 z-30 bg-black/50 md:hidden"
+                    />
+                    <motion.div
+                      initial    = {{ opacity: 0, width: 0 }}
+                      animate    = {{ opacity: 1, width: 320 }}
+                      exit       = {{ opacity: 0, width: 0 }}
+                      transition = {{ type: 'spring', stiffness: 280, damping: 28 }}
+                      className  = "absolute md:relative inset-y-0 right-0 z-40 flex-shrink-0 flex flex-col overflow-hidden shadow-2xl md:shadow-none"
+                      style      = {{ background: 'var(--surface)', borderLeft: '1px solid var(--border)' }}
                     >
+                      <div className="w-[320px] h-full flex flex-col">
+                        {/* Drawer Header */}
+                        <div
+                          className="h-14 px-4 flex items-center justify-between flex-shrink-0"
+                          style={{ borderBottom: '1px solid var(--border)' }}
+                        >
                       <div className="flex items-center gap-2">
                         <FileText className="w-4 h-4" style={{ color: 'var(--accent)' }} />
                         <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
@@ -1119,11 +1152,13 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          )}
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      )}
 
           {/* ──────────────────────────────────────────────────────────────────
               DOCUMENTS VIEW
@@ -1138,14 +1173,23 @@ export default function Dashboard() {
               className  = "flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6 max-w-4xl mx-auto w-full"
             >
               {/* Header */}
-              <div>
-                <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
-                  <Database className="w-5 h-5" style={{ color: 'var(--accent)' }} />
-                  Documents
-                </h2>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-3)' }}>
-                  Upload files to give DocuMind context to answer your questions.
-                </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setMobileMenuOpen(true)}
+                  className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0"
+                  style={{ color: 'var(--text-3)', background: 'var(--bg-2)' }}
+                >
+                  <Menu className="w-4 h-4" />
+                </button>
+                <div>
+                  <h2 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--text)' }}>
+                    <Database className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+                    Documents
+                  </h2>
+                  <p className="text-sm mt-1" style={{ color: 'var(--text-3)' }}>
+                    Upload files to give DocuMind context to answer your questions.
+                  </p>
+                </div>
               </div>
 
               {/* Upload Drop Zone */}
@@ -1251,10 +1295,10 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   <div
-                    className="rounded-2xl overflow-hidden"
+                    className="rounded-2xl overflow-x-auto w-full"
                     style={{ border: '1px solid var(--border)' }}
                   >
-                    <table className="w-full text-left text-xs border-collapse">
+                    <table className="w-full text-left text-xs border-collapse min-w-[500px]">
                       <thead>
                         <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
                           {['File', 'Uploaded', 'Status', ''].map(h => (
