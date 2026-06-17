@@ -21,11 +21,44 @@ FastAPI RAG Pipeline serving the DocuMind Next.js frontend.
 |-------------|-----------------------------------------|
 | API         | FastAPI + Uvicorn                       |
 | Auth        | Google OAuth + JWT (HttpOnly Cookie)    |
-| Database    | PostgreSQL (via SQLAlchemy + Alembic)   |
-| Vector DB   | ChromaDB (local persistence)            |
+| Database    | Neon PostgreSQL (via SQLAlchemy + Alembic)|
+| Vector DB   | pgvector (PostgreSQL Extension)         |
 | Embeddings  | HuggingFace `all-MiniLM-L6-v2`         |
 | LLM         | Groq (`llama-3.3-70b-versatile`)        |
-| Retrieval   | Hybrid: ChromaDB Vector + BM25 Keyword  |
+| Retrieval   | Hybrid: pgvector HNSW + BM25 Keyword    |
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    User([User]) --> |Uploads PDF| API_Upload[FastAPI /api/upload]
+    
+    subgraph Ingestion Pipeline
+        API_Upload --> Extractor[Extract Text]
+        Extractor --> Chunker[Chunking]
+        Chunker --> Embedder[Embedding Model]
+        Extractor --> Summarizer[LLM Summary Generation]
+    end
+    
+    Embedder --> |Insert Chunks & Embeddings| DB[(Neon PostgreSQL\npgvector)]
+    Summarizer --> |Insert Summary & Topics| DB
+    
+    User --> |Chat Query| API_Chat[FastAPI /api/chat]
+    API_Chat --> Router{Intent Router}
+    
+    Router -->|GREETING / SMALL_TALK| LLM_Greet[LLM Greeting Prompt]
+    Router -->|DOC_SUMMARY / DOC_OVERVIEW| DB_Sum[Fetch Stored Summaries\nfrom PostgreSQL]
+    Router -->|DOC_QUERY| DB_Vec[pgvector Similarity Search\n+ BM25 Reranking]
+    
+    DB_Sum --> LLM_RAG[LLM RAG Prompt]
+    DB_Vec --> LLM_RAG
+    
+    LLM_Greet --> Response[Streaming Response]
+    LLM_RAG --> Response
+    Response --> User
+```
 
 ---
 

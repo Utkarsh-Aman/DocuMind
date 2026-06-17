@@ -1,47 +1,63 @@
 import re
+from typing import Optional
+import json
 
 # ---------------------------------------------------------------------------
-# GREETING KEYWORDS
-# If the user's message matches any of these words/phrases, we treat it as a
-# casual greeting and skip the document retrieval entirely.
+# KEYWORDS FOR FAST ROUTING
 # ---------------------------------------------------------------------------
 GREETING_PATTERNS = [
-    r"\bhello\b",
-    r"\bhi\b",
-    r"\bhey\b",
-    r"\bhowdy\b",
-    r"\bgreetings\b",
-    r"\bgood\s*(morning|afternoon|evening|night)\b",
-    r"\bhow are you\b",
-    r"\bwhat's up\b",
-    r"\bwhats up\b",
-    r"\bwho are you\b",
-    r"\bwhat can you do\b",
-    r"\bthanks?\b",
-    r"\bthank you\b",
-    r"\bbye\b",
-    r"\bgoodbye\b",
+    r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bhowdy\b", r"\bgreetings\b",
+    r"\bgood\s*(morning|afternoon|evening|night)\b", r"\bhow are you\b",
+    r"\bwhat's up\b", r"\bwhats up\b", r"\bwho are you\b",
+    r"\bthanks?\b", r"\bthank you\b", r"\bbye\b", r"\bgoodbye\b"
 ]
 
-# Compile all patterns into one single regex for fast matching
+SUMMARY_PATTERNS = [
+    r"\bsummarize\b", r"\bsummary\b", r"\bwhat is this( document| pdf)? about\b",
+    r"\btl;?dr\b", r"\bgive me the key takeaways\b", r"\bmain topics\b",
+    r"\boverview\b", r"\bbrief me\b"
+]
+
 _GREETING_REGEX = re.compile("|".join(GREETING_PATTERNS), re.IGNORECASE)
+_SUMMARY_REGEX = re.compile("|".join(SUMMARY_PATTERNS), re.IGNORECASE)
 
 
-def is_greeting(query: str) -> bool:
+def route_intent(query: str, llm_fallback_fn=None) -> str:
     """
-    Returns True if the query looks like a casual greeting or small talk.
-    In that case, we should NOT run the RAG retriever.
+    Classifies the user query into one of:
+    - GREETING
+    - SMALL_TALK
+    - DOC_SUMMARY
+    - DOC_OVERVIEW
+    - DOC_QUERY
 
-    Examples that return True:
-        "hi", "Hello there!", "how are you doing?", "thanks!", "bye"
-
-    Examples that return False:
-        "what are the main topics of the document?", "summarize chapter 2"
+    Uses regex first for speed. If ambiguous and an LLM function is provided, falls back to LLM.
     """
-    # Also treat very short queries (1-2 words) that aren't a question as greetings
-    words = query.strip().split()
-    if len(words) <= 2 and "?" not in query:
-        if _GREETING_REGEX.search(query):
-            return True
+    q_lower = query.strip().lower()
+    
+    # 1. Fast Regex Checks
+    if _SUMMARY_REGEX.search(q_lower):
+        # We group summary and overview into DOC_SUMMARY/DOC_OVERVIEW
+        if "overview" in q_lower or "main topic" in q_lower:
+            return "DOC_OVERVIEW"
+        return "DOC_SUMMARY"
+        
+    words = q_lower.split()
+    if len(words) <= 3 and "?" not in q_lower:
+        if _GREETING_REGEX.search(q_lower):
+            return "GREETING"
 
-    return bool(_GREETING_REGEX.search(query))
+    if _GREETING_REGEX.search(q_lower) and len(words) < 5:
+        return "GREETING"
+
+    # 2. LLM Fallback (if provided)
+    if llm_fallback_fn:
+        try:
+            llm_intent = llm_fallback_fn(query)
+            if llm_intent in ["GREETING", "SMALL_TALK", "DOC_SUMMARY", "DOC_OVERVIEW", "DOC_QUERY"]:
+                return llm_intent
+        except Exception as e:
+            print(f"[WARNING] LLM intent routing failed: {e}")
+
+    # 3. Default Fallback
+    return "DOC_QUERY"

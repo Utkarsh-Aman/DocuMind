@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 from rank_bm25 import BM25Okapi
-from src.vectorstore import ChromaStore
+from src.pgvector_store import PGVectorStore
+from sqlalchemy.orm import Session
 
 # ---------------------------------------------------------------------------
 # CONSTANTS — tweak these to control retrieval behavior
@@ -21,24 +22,21 @@ class HybridRetriever:
     """
     Retrieves the most relevant document chunks for a query using two steps:
 
-    Step 1 — Vector Search (ChromaDB):
+    Step 1 — Vector Search (pgvector):
         Fetch the top INITIAL_FETCH_K chunks using semantic similarity.
         Each chunk gets a cosine similarity score (0.0 – 1.0).
 
     Step 2 — BM25 Keyword Re-rank (in memory):
         Run BM25 over the fetched pool to get keyword relevance scores.
         Combine both scores (50% vector + 50% BM25) and pick the best FINAL_TOP_K.
-
-    This hybrid approach handles both:
-        - Meaning-based queries ("explain memory loss") → vector search wins
-        - Keyword-based queries ("chapter 3 forgetting curve") → BM25 wins
     """
 
-    def __init__(self, vectorstore: ChromaStore):
+    def __init__(self, vectorstore: PGVectorStore):
         self.vectorstore = vectorstore
 
     def retrieve(
         self,
+        db: Session,
         query: str,
         user_id: int,
         top_k: int = FINAL_TOP_K,
@@ -47,17 +45,13 @@ class HybridRetriever:
     ) -> Dict[str, Any]:
         """
         Run the full hybrid retrieval pipeline.
-
-        Returns a dict with:
-            - 'chunks'  : list of the best chunks (dicts with content, metadata, scores)
-            - 'passed'  : True if we found chunks above the threshold, False otherwise
-            - 'debug'   : debug info (only when debug=True)
         """
 
         # ------------------------------------------------------------------
-        # STEP 1: Vector search — get a large pool from ChromaDB with scores
+        # STEP 1: Vector search — get a large pool from pgvector with scores
         # ------------------------------------------------------------------
         raw_results = self.vectorstore.query_with_scores(
+            db=db,
             query_text=query,
             user_id=user_id,
             top_k=INITIAL_FETCH_K

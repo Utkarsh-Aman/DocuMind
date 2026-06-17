@@ -149,6 +149,82 @@ def generate_answer(
 
 
 # ---------------------------------------------------------------------------
+# SUMMARIZATION
+# ---------------------------------------------------------------------------
+
+async def generate_document_summary(chunks: List[str]) -> Dict[str, Any]:
+    """
+    Recursively summarizes a large document.
+    chunks: list of text chunks
+    Returns a dict with {"summary": str, "key_topics": list}
+    """
+    llm = build_llm(streaming=False)
+    
+    # Recursive summarization if too many chunks
+    current_chunks = chunks
+    while len(current_chunks) > 10:
+        next_chunks = []
+        # Group by 10
+        for i in range(0, len(current_chunks), 10):
+            group = current_chunks[i:i+10]
+            context = "\n\n".join(group)
+            prompt = [
+                SystemMessage(content="Summarize the following text briefly. Provide a single paragraph summary."),
+                HumanMessage(content=context)
+            ]
+            response = await llm.ainvoke(prompt)
+            next_chunks.append(response.content)
+        current_chunks = next_chunks
+
+    # Final summary and topics extraction
+    final_context = "\n\n".join(current_chunks)
+    system_prompt = (
+        "You are an expert summarizer. Analyze the following text and provide a JSON response with two keys:\n"
+        "1. 'summary': A comprehensive but concise overview of the entire document.\n"
+        "2. 'key_topics': A list of 3-5 main topics covered.\n\n"
+        "Respond ONLY with valid JSON."
+    )
+    prompt = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=final_context)
+    ]
+    
+    response = await llm.ainvoke(prompt)
+    try:
+        import json
+        content = response.content
+        # Try to parse JSON from the response
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].strip()
+        parsed = json.loads(content)
+        return {"summary": parsed.get("summary", ""), "key_topics": parsed.get("key_topics", [])}
+    except Exception as e:
+        print(f"[WARNING] Failed to parse summary JSON: {e}")
+        return {"summary": response.content, "key_topics": []}
+
+# ---------------------------------------------------------------------------
+# INTENT FALLBACK
+# ---------------------------------------------------------------------------
+
+def llm_intent_fallback(query: str) -> str:
+    """Fallback to LLM for intent routing."""
+    llm = build_llm(streaming=False)
+    system_prompt = (
+        "Classify the user's query into exactly one of the following categories:\n"
+        "GREETING, SMALL_TALK, DOC_SUMMARY, DOC_OVERVIEW, DOC_QUERY\n\n"
+        "Reply with ONLY the category name. No other text."
+    )
+    prompt = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=query)
+    ]
+    response = llm.invoke(prompt)
+    return response.content.strip().upper()
+
+
+# ---------------------------------------------------------------------------
 # CITATION BUILDER
 # ---------------------------------------------------------------------------
 

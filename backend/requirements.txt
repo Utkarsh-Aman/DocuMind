@@ -5,7 +5,7 @@ langchain-text-splitters
 pypdf
 pymupdf
 sentence-transformers
-chromadb
+pgvector
 langchain-groq
 python-dotenv
 fastapi

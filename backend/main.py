@@ -11,7 +11,7 @@ import uvicorn
 
 from src.data_loader import load_document
 from src.embedding import EmbeddingPipeline
-from src.vectorstore import ChromaStore
+from src.pgvector_store import PGVectorStore
 from src.database.connection import get_db
 from src.database.models import User, Document, Chat, Message
 from src.auth.google_auth import verify_google_token
@@ -19,9 +19,9 @@ from src.auth.jwt_auth import create_access_token
 from src.auth.dependencies import get_current_user
 
 # Import our new V2.20 RAG modules
-from src.rag.intent_router import is_greeting
+from src.rag.intent_router import route_intent
 from src.rag.retriever import HybridRetriever
-from src.rag.generator import generate_streaming_answer, generate_answer, build_citations
+from src.rag.generator import generate_streaming_answer, generate_answer, build_citations, generate_document_summary, llm_intent_fallback
 
 # ---------------------------------------------------------------------------
 # APP SETUP
@@ -48,8 +48,8 @@ TEMP_DIR = "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Initialize global components (created once at startup)
-chroma_store    = ChromaStore(persist_dir="chroma_db")
-hybrid_retriever = HybridRetriever(vectorstore=chroma_store)
+pgvector_store   = PGVectorStore(model_name="all-MiniLM-L6-v2")
+hybrid_retriever = HybridRetriever(vectorstore=pgvector_store)
 embedding_pipe   = EmbeddingPipeline(chunk_size=1000, chunk_overlap=200)
 
 
@@ -226,6 +226,14 @@ async def upload_file(
 
     temp_path = os.path.join(TEMP_DIR, file.filename)
 
+    # 15MB limit check
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    MAX_FILE_SIZE = 15 * 1024 * 1024
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File size exceeds 15MB limit")
+
     # Create a Postgres record immediately so the user sees upload progress
     document = Document(user_id=current_user.id, filename=file.filename, status="processing")
     db.add(document)
@@ -252,14 +260,20 @@ async def upload_file(
             db.commit()
             raise HTTPException(status_code=422, detail="Document produced no text chunks.")
 
-        # Tag each chunk with user & document metadata for filtering in ChromaDB
+        # Tag each chunk with user & document metadata for filtering in pgvector
         for chunk in chunks:
             chunk.metadata["user_id"]     = str(current_user.id)
             chunk.metadata["document_id"] = str(document.id)
             chunk.metadata["filename"]    = file.filename
 
-        # Store chunks in ChromaDB
-        chroma_store.add_documents(chunks)
+        # Generate recursive summary
+        chunk_texts = [c.page_content for c in chunks]
+        summary_data = await generate_document_summary(chunk_texts)
+        document.summary = summary_data["summary"]
+        document.key_topics = summary_data["key_topics"]
+
+        # Store chunks in pgvector
+        pgvector_store.add_documents(db=db, documents=chunks, user_id=current_user.id, document_id=document.id)
 
         # Mark as active
         document.status = "active"
@@ -323,7 +337,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found or access denied.")
 
     try:
-        chroma_store.delete_document_chunks(user_id=current_user.id, document_id=document_id)
+        pgvector_store.delete_document_chunks(db=db, user_id=current_user.id, document_id=document_id)
         db.delete(document)
         db.commit()
         return {"status": "success", "detail": f"Deleted '{document.filename}'."}
@@ -463,27 +477,52 @@ async def chat_query(
     history = get_recent_history(db, chat_id, limit=8)
 
     # ------------------------------------------------------------------
-    # STEP 2: Intent Router — is this a greeting?
+    # STEP 2: Intent Router
     # ------------------------------------------------------------------
-    greeting = is_greeting(req.query)
+    intent = route_intent(req.query, llm_fallback_fn=llm_intent_fallback)
 
-    if greeting:
+    if intent in ["GREETING", "SMALL_TALK"]:
         # Skip retrieval, just stream a friendly response
         citations  = []
         context    = ""
-        debug_info = None
+        debug_info = {"intent": intent}
+        greeting   = True
+
+    elif intent in ["DOC_SUMMARY", "DOC_OVERVIEW"]:
+        # Fetch summaries from Postgres, bypass vector search
+        docs = db.query(Document).filter(Document.user_id == current_user.id).all()
+        if not docs:
+            context = "No documents found."
+        else:
+            context_parts = []
+            for d in docs:
+                if d.summary:
+                    topics = ', '.join(d.key_topics) if d.key_topics else "N/A"
+                    context_parts.append(f"Document: {d.filename}\nTopics: {topics}\nSummary: {d.summary}")
+            context = "\n\n".join(context_parts)
+            if not context:
+                context = "No summaries available for the uploaded documents."
+        citations  = []
+        debug_info = {"intent": intent}
+        greeting   = False
 
     else:
         # ------------------------------------------------------------------
-        # STEP 3: Hybrid Retrieval
+        # STEP 3: Hybrid Retrieval (DOC_QUERY)
         # ------------------------------------------------------------------
+        greeting = False
         retrieval = hybrid_retriever.retrieve(
+            db             = db,
             query          = req.query,
             user_id        = current_user.id,
             debug          = req.debug_mode,
         )
 
         debug_info = retrieval.get("debug")
+        if debug_info:
+            debug_info["intent"] = intent
+        else:
+            debug_info = {"intent": intent}
 
         # ------------------------------------------------------------------
         # STEP 4: Relevance Threshold Check

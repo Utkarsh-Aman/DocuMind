@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from pgvector.sqlalchemy import Vector
 from .connection import Base
 
 
@@ -32,9 +33,29 @@ class Document(Base):
     filename         = Column(String, nullable=False)
     upload_timestamp = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     status           = Column(String, default="processing", nullable=False)  # processing | active | error
+    summary          = Column(Text, nullable=True)
+    key_topics       = Column(JSON, nullable=True)
 
     # Many documents → one user
     user             = relationship("User", back_populates="documents")
+    # One document -> many chunks
+    chunks           = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentChunk(Base):
+    """
+    DocumentChunk model storing vector embeddings using pgvector.
+    """
+    __tablename__ = "document_chunks"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    document_id   = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    user_id       = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    page_content  = Column(Text, nullable=False)
+    metadata_json = Column(JSON, nullable=False)
+    embedding     = Column(Vector(384)) # assuming all-MiniLM-L6-v2 which is 384 dims
+
+    document      = relationship("Document", back_populates="chunks")
 
 
 class Chat(Base):

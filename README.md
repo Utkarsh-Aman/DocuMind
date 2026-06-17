@@ -8,10 +8,43 @@ DocuMind is a multi-user Retrieval-Augmented Generation (RAG) platform. It secur
 
 1. **Google OAuth 2.0 Integration**: Authenticate securely using Google Login, automatically provisioning user accounts.
 2. **Session Security (HttpOnly Cookies)**: Tokens are signed on the backend (JWT) and stored securely in HttpOnly, SameSite cookies to mitigate XSS risks.
-3. **Strict Document Isolation**: ChromaDB collections utilize metadata filters matching the authenticated database `user_id`. Users can never query, list, or delete another user's documents.
-4. **Relational Data Mapping**: SQLAlchemy models track Users and Documents in PostgreSQL (Neon serverless setup).
+3. **Strict Document Isolation**: PostgreSQL collections utilize metadata filters matching the authenticated database `user_id`. Users can never query, list, or delete another user's documents.
+4. **Relational Data Mapping**: SQLAlchemy models track Users, Documents, and Vectors in PostgreSQL (Neon serverless setup with pgvector).
 5. **Real-time Status Polling**: The frontend vault tracks document parsing and embedding status dynamically.
 6. **Animated Dark UI**: Designed with TailwindCSS v4 and Framer Motion for a modern, glassmorphic dark-theme console experience.
+
+---
+
+## Architecture Diagram
+
+```mermaid
+flowchart TD
+    User([User]) --> |Uploads PDF| API_Upload[FastAPI /api/upload]
+    
+    subgraph Ingestion Pipeline
+        API_Upload --> Extractor[Extract Text]
+        Extractor --> Chunker[Chunking]
+        Chunker --> Embedder[Embedding Model]
+        Extractor --> Summarizer[LLM Summary Generation]
+    end
+    
+    Embedder --> |Insert Chunks & Embeddings| DB[(Neon PostgreSQL\npgvector)]
+    Summarizer --> |Insert Summary & Topics| DB
+    
+    User --> |Chat Query| API_Chat[FastAPI /api/chat]
+    API_Chat --> Router{Intent Router}
+    
+    Router -->|GREETING / SMALL_TALK| LLM_Greet[LLM Greeting Prompt]
+    Router -->|DOC_SUMMARY / DOC_OVERVIEW| DB_Sum[Fetch Stored Summaries\nfrom PostgreSQL]
+    Router -->|DOC_QUERY| DB_Vec[pgvector Similarity Search\n+ BM25 Reranking]
+    
+    DB_Sum --> LLM_RAG[LLM RAG Prompt]
+    DB_Vec --> LLM_RAG
+    
+    LLM_Greet --> Response[Streaming Response]
+    LLM_RAG --> Response
+    Response --> User
+```
 
 ---
 
