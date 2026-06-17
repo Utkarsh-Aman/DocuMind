@@ -564,8 +564,9 @@ async def chat_query(
                 is_greeting = greeting,
             ):
                 full_answer += token
-                # Send each token as an SSE data event
-                yield f"data: {token}\n\n"
+                # Send each token as an SSE data event, escaping newlines so the frontend parser doesn't drop them
+                safe_token = token.replace('\n', '\\n')
+                yield f"data: {safe_token}\n\n"
 
         except Exception as e:
             error_msg = f"Error generating answer: {str(e)}"

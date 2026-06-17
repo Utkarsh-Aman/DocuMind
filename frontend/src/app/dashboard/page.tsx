@@ -466,8 +466,8 @@ export default function Dashboard() {
               console.error('Error parsing DONE payload:', err);
             }
           } else {
-            // Append the token to the streaming message
-            fullAnswer += payload;
+            // Append the token to the streaming message, unescaping newlines
+            fullAnswer += payload.replace(/\\n/g, '\n');
             setChatHistory(prev => {
               const updated = [...prev];
               updated[updated.length - 1] = {
