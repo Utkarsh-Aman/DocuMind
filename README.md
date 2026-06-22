@@ -1,50 +1,152 @@
-# DocuMind Project Structure and Progress
+# DocuMind - Secure AI Document RAG Platform
 
-## Folder and File Structure
+DocuMind is a multi-user Retrieval-Augmented Generation (RAG) platform. It secures user documents through complete Google OAuth authentication, local/cloud PostgreSQL storage, and isolated ChromaDB vector indexing (metadata filtering).
 
-### Backend
-The backend is a FastAPI application handling the core RAG (Retrieval-Augmented Generation) logic.
-- `backend/main.py`: The entry point for the FastAPI server. It exposes endpoints for uploading documents (`/api/upload`) and asking questions (`/api/chat`).
-- `backend/requirements.txt`: The python dependencies for the backend (FastAPI, LangChain, ChromaDB, etc.).
-- `backend/src/data_loader.py`: Responsible for loading and parsing different types of documents (e.g., PDFs).
-- `backend/src/embedding.py`: Handles the chunking of document text and generating embeddings using sentence transformers.
-- `backend/src/search.py`: Contains the `RAGSearch` class which interacts with ChromaDB to store documents and retrieve context, and uses Groq/Langchain to generate answers based on the retrieved context.
-- `backend/chroma_db/`: Directory where the ChromaDB vector database is persisted.
-- `backend/temp_uploads/`: Temporary directory for storing files uploaded via the API before processing.
+---
 
-### Frontend
-The frontend is a Next.js application (React framework).
-- `frontend/package.json`: Contains project metadata, scripts (`dev`, `build`), and Node.js dependencies (Next.js, React, TailwindCSS).
-- `frontend/src/app/page.tsx`: The main React component/page for the application UI. It likely contains the chat interface and file upload component.
-- `frontend/src/app/layout.tsx`: The root layout of the Next.js application, defining the global HTML structure and importing global styles.
-- `frontend/src/app/globals.css`: Global CSS file, including TailwindCSS directives.
+## Key Features
 
-## How to Start the Full Application
+1. **Google OAuth 2.0 Integration**: Authenticate securely using Google Login, automatically provisioning user accounts.
+2. **Session Security (HttpOnly Cookies)**: Tokens are signed on the backend (JWT) and stored securely in HttpOnly, SameSite cookies to mitigate XSS risks.
+3. **Strict Document Isolation**: PostgreSQL collections utilize metadata filters matching the authenticated database `user_id`. Users can never query, list, or delete another user's documents.
+4. **Relational Data Mapping**: SQLAlchemy models track Users, Documents, and Vectors in PostgreSQL (Neon serverless setup with pgvector).
+5. **Real-time Status Polling**: The frontend vault tracks document parsing and embedding status dynamically.
+6. **Animated Dark UI**: Designed with TailwindCSS v4 and Framer Motion for a modern, glassmorphic dark-theme console experience.
 
-### 1. Start the Backend
-Open a terminal and navigate to the `backend` directory:
-```bash
-cd backend
-# Create and activate a virtual environment (if not already done)
-uv venv
-.venv\Scripts\activate # On Windows
+---
 
-# Install dependencies
-uv pip install -r requirements.txt
+## Architecture Diagram
 
-# Start the FastAPI server
-python main.py
+```mermaid
+flowchart TD
+    User([User]) --> |Uploads PDF| API_Upload[FastAPI /api/upload]
+    
+    subgraph Ingestion Pipeline
+        API_Upload --> Extractor[Extract Text]
+        Extractor --> Chunker[Chunking]
+        Chunker --> Embedder[Embedding Model]
+        Extractor --> Summarizer[LLM Summary Generation]
+    end
+    
+    Embedder --> |Insert Chunks & Embeddings| DB[(Neon PostgreSQL\npgvector)]
+    Summarizer --> |Insert Summary & Topics| DB
+    
+    User --> |Chat Query| API_Chat[FastAPI /api/chat]
+    API_Chat --> Router{Intent Router}
+    
+    Router -->|GREETING / SMALL_TALK| LLM_Greet[LLM Greeting Prompt]
+    Router -->|DOC_SUMMARY / DOC_OVERVIEW| DB_Sum[Fetch Stored Summaries\nfrom PostgreSQL]
+    Router -->|DOC_QUERY| DB_Vec[pgvector Similarity Search\n+ BM25 Reranking]
+    
+    DB_Sum --> LLM_RAG[LLM RAG Prompt]
+    DB_Vec --> LLM_RAG
+    
+    LLM_Greet --> Response[Streaming Response]
+    LLM_RAG --> Response
+    Response --> User
 ```
-The backend API will run on `http://localhost:8000`.
 
-### 2. Start the Frontend
-Open another terminal and navigate to the `frontend` directory:
-```bash
-cd frontend
-# Install dependencies (if not already done)
-npm install
+---
 
-# Start the Next.js development server
-npm run dev
+## Folder Structure
+
+```text
+DocuMind/
+├── backend/
+│   ├── alembic/                # Database migrations
+│   ├── chroma_db/              # Persistent Chroma database storage
+│   ├── src/
+│   │   ├── auth/               # Auth package (Google verify, JWT, dependencies)
+│   │   ├── database/           # DB package (SQLAlchemy connections and models)
+│   │   ├── data_loader.py      # Document parser (PDF, TXT, CSV, DOCX, JSON, Excel)
+│   │   ├── embedding.py        # Text splitter & Embedding pipe
+│   │   ├── search.py           # RAG retrieval & Groq LLM logic
+│   │   └── vectorstore.py      # Chroma Store client with user isolation
+│   ├── Dockerfile
+│   ├── main.py                 # FastAPI application router
+│   └── requirements.txt        # Backend python dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── dashboard/      # Protected dashboard workspaces
+│   │   │   ├── login/          # Google sign-in landing card
+│   │   │   ├── globals.css     # Styling sheets with TailwindCSS import
+│   │   │   ├── layout.tsx      # Root html layout shell
+│   │   │   └── page.tsx        # Auto-routing landing page
+│   │   └── middleware.ts       # Server-side auth route guard middleware
+│   ├── package.json
+│   └── tsconfig.json
+├── docker-compose.yml          # FastAPI + local PostgreSQL config
+└── README.md
 ```
-The frontend application will be available at `http://localhost:3000`.
+
+---
+
+## Setup & Configuration
+
+### Prerequisites
+- Node.js
+- Python (3.10+)
+- Google Cloud Console client credentials (configured origin )
+- Groq API Key (for LLM RAG inference)
+
+### 1. Environment Variables
+
+Create `.env` in the `backend/` directory:
+```env
+GROQ_API_KEY="your-groq-api-key"
+DATABASE_URL="postgresql://neondb_owner:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.tech/neondb?sslmode=require"
+GOOGLE_CLIENT_ID="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+JWT_SECRET="rag-for-docs-super-secret-key-change-this-in-production"
+```
+
+Create `.env` in the `frontend/` directory:
+```env
+NEXT_PUBLIC_BACKEND_URL="http://localhost:8000"
+```
+
+---
+
+## How to Run
+
+### Development Mode
+
+#### Step A: Run the Backend
+1. Open terminal in `backend/` folder:
+   ```bash
+   cd backend
+   # Ensure virtual environment is ready
+   uv venv
+   # Activate it (Windows)
+   .venv\Scripts\activate
+   # Install dependencies
+   uv pip install -r requirements.txt
+   ```
+2. Apply database schemas to PostgreSQL:
+   ```bash
+   python -m alembic upgrade head
+   ```
+3. Run the FastAPI development server:
+   ```bash
+   uvicorn main:app --reload
+   ```
+   The backend API will run on `http://localhost:8000`.
+
+#### Step B: Run the Frontend
+1. Open another terminal in the `frontend/` folder:
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+   The client application will run on `http://localhost:3000`.
+
+---
+
+### Production Deployment via Docker Compose
+
+To deploy the stack locally with a local PostgreSQL server, run the following from the root workspace directory:
+```bash
+docker-compose up --build
+```
+This launches a PostgreSQL container mapped to port `5432` and builds/starts the FastAPI backend container listening on port `8000`.

@@ -16,8 +16,8 @@ class RAGSearch:
         self.llm = ChatGroq(groq_api_key=groq_api_key, model_name=llm_model)
         print(f"[INFO] Groq LLM initialized: {llm_model}")
 
-    def search_and_summarize(self, query: str, top_k: int = 5):
-        results = self.vectorstore.query(query, top_k=top_k)
+    def search_and_summarize(self, query: str, user_id: int, top_k: int = 5):
+        results = self.vectorstore.query(query, user_id=user_id, top_k=top_k)
         
         texts = [r.page_content for r in results]
         context = "\n\n".join(texts)

@@ -7,3 +7,6 @@ frontend/.next/
 *.env
 .env
 .DS_Store
+secret.txt
+documind.html
+index.html
