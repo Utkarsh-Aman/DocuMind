@@ -8,7 +8,7 @@ load_dotenv()
 # Google OAuth Client ID provided in the credentials
 GOOGLE_CLIENT_ID = os.getenv(
     "GOOGLE_CLIENT_ID",
-    "1034948744999-0a29fr7khu9e08luec1mbrng63uslq60.apps.googleusercontent.com"
+    "10example--99-0a29fr7khu9enotreal60.apps.googleusercontent.com"
 )
 
 def verify_google_token(token: str) -> dict:
