@@ -7,6 +7,8 @@ sdk: docker
 app_port: 7860
 base_path: /docs
 pinned: false
+custom_headers:
+  cross-origin-opener-policy: same-origin-allow-popups
 ---
 
 # DocuMind Backend — V2.20
