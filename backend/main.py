@@ -46,6 +46,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+
+@app.middleware("http")
+async def force_cors_credentials(request: Request, call_next):
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin and ("netlify.app" in origin or "localhost" in origin or "vercel.app" in origin):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
 TEMP_DIR = "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
